@@ -1,0 +1,97 @@
+1. Core System Architecture
+The system is a Sovereign Layer 1 built on the Cosmos SDK, utilizing CometBFT for consensus and Cosmos EVM (Ethermint) for execution.
+
+The "Mirror" Principle (The Unified Account)
+Requirement: Mathematical identity between 0x... (Ethereum) and mirror1... (Cosmos).
+
+Implementation: The chain must use BIP-44 CoinType 60 (Ethereum's path) and EthSecp256k1 (Ethereum’s curve) for all accounts.
+
+Mechanism: When a user provides a private key, the chain derives a public key hash. This hash is then encoded twice: once as Hex (for EVM) and once as Bech32 (for Cosmos). They are the same account.
+
+2. Technical Stack
+Blockchain Framework: Cosmos SDK (v0.50+)
+
+Consensus Engine: CometBFT (v0.38+)
+
+EVM Library: cosmos/evm (The maintained successor to Ethermint)
+
+Language: Go (Golang) 1.21+ for chain logic; Solidity 0.8.20+ for EVM logic.
+
+UI/Frontend: Next.js (TypeScript), Tailwind CSS.
+
+Libraries: ethers.js (EVM interaction), @cosmjs/stargate (Cosmos interaction).
+
+DevOps: Docker, Docker-Compose, Ignite CLI.
+
+3. Phase 1: Custom Chain Construction
+Task 1.1: Project Scaffolding
+Initialize a new chain with the correct address prefix:
+
+Task 1.2: Account Configuration (The Identity Bridge)
+You must override the default Cosmos account types.
+
+Modify app/app.go: Configure the AccountKeeper and AuthKeeper to use ethermint.EthAccount.
+
+Set BIP-44: In the chain configuration (config.yml), set the default coin type to 60.
+
+Result: mirrorvaultd keys add will now generate addresses that start with mirror1 but share the same private key as a 0x address.
+
+Task 1.3: Custom Business Logic Module (x/vault)
+Create a Go module to store text data.
+
+Store Type: map[string]string (Address -> Encrypted/Plain Text).
+
+Message: MsgStoreSecret (Sender, Text).
+
+Logic: A "Pre-Run" check that verifies if the user has an "Unlock Credit" (granted by the EVM side).
+
+4. Phase 2: Inter-VM Business Logic
+The "Mirror Lock" Workflow
+Solidity Contract (VaultGate.sol): A simple contract with a payToUnlock() function. When called, it emits an Unlocked(address user) event.
+
+Go Precompile: You will implement a Stateful Precompile in the Go source code.
+
+Address: 0x00...000101 (Custom).
+
+Function: When payToUnlock() is called in Solidity, it executes the Precompile.
+
+Action: The Precompile writes directly to the Cosmos SDK x/vault state to increment a "StorageCredit" counter for that user's address.
+
+5. Phase 3: Frontend & UI Specification
+Layout Design
+Theme: Dark Mode (Background: #0D1117, Primary: #58A6FF).
+
+Top Bar: * Left: Mirror Vault Logo.
+
+Right: "Connect Wallets" button (Triggering both MetaMask and Keplr).
+
+Main Dashboard (Split View):
+
+Left Column (EVM): Displays 0x address, ETH balance, and "Pay to Unlock" button.
+
+Right Column (Cosmos): Displays mirror1 address, native coin balance, and "Save Secret" text area.
+
+Center Conversion Tool: A box that takes any 0x address and instantly shows the mirror1 equivalent using the Bech32 encoding formula.
+
+Real-Time Logs (The Debug Bar)
+Position: Bottom 20% of the screen.
+
+Style: Terminal-like (Black background, green text).
+
+Functionality:
+
+Stream every event from the chain (JSON-RPC and gRPC).
+
+"Copy TX Hash" button next to every log.
+
+Highlight errors in red.
+
+6. Phase 4: Testing & Documentation
+Documentation Protocol
+Swagger/OpenAPI: Auto-generated for the REST API (Port 1317).
+
+Hardhat Docs: For the VaultGate.sol contract.
+
+README.md: Detailed setup guide for docker-compose.
+
+Test Matrix

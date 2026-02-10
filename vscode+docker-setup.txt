@@ -1,0 +1,120 @@
+To build **The Mirror Vault** as a professional, containerized system, we will move away from raw terminal commands and instead use a **Docker-first workflow**.
+
+You will build the chain's logic within a dedicated development container, which ensures that your Go environment, Cosmos SDK dependencies, and EVM modules are perfectly configured without affecting your local machine.
+
+---
+
+## **1. The Developer Environment (VS Code + Docker)**
+
+You will use the **VS Code "Dev Containers"** extension. This allows you to open your project folder inside a running Docker container that has every tool (Go, Ignite, Node, Solidity) pre-installed.
+
+* **Stack:**
+* **IDE:** VS Code with the `Dev Containers` extension.
+* **Container Engine:** Docker Desktop.
+* **Base Image:** A custom `mirrorvault-dev` image (based on Go 1.21).
+
+
+* **Workflow:**
+1. Open VS Code.
+2. "Reopen in Container".
+3. Your terminal inside VS Code is now a high-powered blockchain development environment.
+
+
+
+---
+
+## **2. System Infrastructure (Docker-Compose)**
+
+We will use a `docker-compose.yml` to orchestrate three distinct services. This is how the "EVM meets Cosmos" in a controlled environment.
+
+| Service | Image/Source | Responsibility |
+| --- | --- | --- |
+| **`chain-node`** | `mirrorvault:local` | The actual L1 blockchain. Runs Tendermint, Cosmos SDK, and the EVM state machine. |
+| **`api-proxy`** | `nginx:alpine` | Routes traffic to Port 8545 (EVM RPC) and Port 1317 (Cosmos REST). |
+| **`frontend`** | `node:18-alpine` | The Next.js dashboard where MetaMask and Keplr connect. |
+
+---
+
+## **3. Detailed Functional Flow (End-to-End)**
+
+### **A. Identity & Wallet Sync (The "Pair")**
+
+The "Magic" happens in the code logic, not the wallet.
+
+1. **Connection Logic:** When the user clicks "Connect," the frontend triggers two prompts:
+* **MetaMask:** `window.ethereum.request({ method: 'wallet_addEthereumChain', ... })`. This automatically adds your custom Mirror Vault chain ID and RPC URL (8545).
+* **Keplr:** `window.keplr.experimentalSuggestChain(...)`. This adds the Cosmos-side configuration.
+
+
+2. **Mapping:** The UI takes the Public Key from the connected wallet. It runs a local function to show:
+* `mirror1...` (Bech32 encoded hash).
+* `0x...` (Hex encoded hash).
+* **User Action:** User imports the *same* Private Key into both. Now, any token move in Keplr is visible in MetaMask because the **Chain State** recognizes them as one account.
+
+
+
+### **B. The Business Logic (The Vault Test)**
+
+We will build a **"Message Lock"** feature to prove the system works.
+
+1. **The EVM Action:** User goes to the "EVM Tab" in the UI. They call `vaultContract.unlockStorage()` via MetaMask.
+2. **The State Bridge:** The EVM contract (Solidity) triggers a **Go Precompile**. This Go code writes to the Cosmos Store: `is_unlocked[user_address] = true`.
+3. **The Cosmos Action:** User switches to the "Cosmos Tab." They type a secret message. The UI calls the Cosmos `MsgStoreSecret` via Keplr.
+4. **Verification:** The Cosmos module checks the `is_unlocked` flag (set by the EVM). If true, the message is saved.
+
+---
+
+## **4. The UI Specification (The "Mirror Dashboard")**
+
+### **Layout & Components**
+
+* **Header:** Two status lights. 🟢 MetaMask Connected | 🟢 Keplr Connected.
+* **The Mirror Box (Center):** * Two large address fields.
+* A "Copy Both" button.
+* A "Balance Sync" indicator showing: `1000 MVLT (Cosmos) == 1000 MVLT (EVM)`.
+
+
+* **The Console (Bottom):** * A scrolling log of every event.
+* *Example Log:* `[EVM] Tx Confirmed: 0xabc... | [Cosmos] Permission Updated for mirror1...`
+
+
+* **Color Palette:**
+* *Primary:* `#00f2ff` (Cyber Blue)
+* *Success:* `#00ff88` (Neon Green)
+* *Log Background:* `#050505` (Deep Black)
+
+
+
+---
+
+## **5. Project Execution Steps (for AI/Devs)**
+
+### **Step 1: The Dev Container Setup**
+
+Create a `.devcontainer/devcontainer.json` that installs `ignite` and `golang`. This ensures the environment is identical for everyone.
+
+### **Step 2: Chain Logic (Go)**
+
+1. Modify `app.go` to use `ethermint` account types.
+2. Scaffold the `x/vault` module.
+3. Implement the `EndBlocker` logic to sync EVM events to the Cosmos state.
+
+### **Step 3: UI Implementation (Next.js)**
+
+1. Use `wagmi` or `ethers` for the EVM side.
+2. Use `cosmjs` for the Keplr side.
+3. Build the **Chain Suggester** logic so users don't have to manually enter RPC settings.
+
+### **Step 4: Testing & Logs**
+
+1. Run `docker-compose up`.
+2. The UI should show a "Live Feed" of the Tendermint block production.
+3. Perform a "Cross-VM" transaction and verify the log shows both the `0x` hash and the Cosmos event.
+
+---
+
+### **Achievable Result**
+
+By the end of this project, you will have a **single VS Code window** that runs an entire blockchain ecosystem in Docker. You will have a UI that "magically" syncs two different wallet types, proving that your custom L1 logic has unified the two most powerful ecosystems in crypto.
+
+**Would you like me to generate the `docker-compose.yml` and the `.devcontainer` configuration to get your environment ready?**

@@ -1,0 +1,48 @@
+This high-level document serves as the foundational "Blueprints" for your project. It is designed to be shared with developers to explain the logic, stakeholders to explain the value, and reporters to explain the innovation.
+
+Project: The Mirror Vault
+High-Level Design & Requirements Document
+1. Executive Summary
+The Mirror Vault is a custom hybrid blockchain built using the Cosmos SDK, CometBFT (Tendermint), and the Cosmos EVM (Ethermint) framework. Its primary innovation is Unified Identity Mapping, where a single private key controls a "wallet pair" (Keplr and MetaMask) that is mathematically and statefully synced. The project demonstrates a "Digital Safety Deposit Box" where business logic is split between EVM smart contracts and native Cosmos modules.
+
+2. Project Principles
+One Key, Two Worlds: A user should never "bridge" tokens between their own accounts on the same chain; the balance should exist in a single unified store.
+
+Mathematical Mirroring: Address conversion between 0x... (Hex) and mirror1... (Bech32) must be actual, not symbolic.
+
+Hybrid Execution: Complex logic runs in Solidity (EVM), while high-performance data storage runs in Golang (Cosmos SDK).
+
+3. Functional Requirements (High-Level)
+A. Core Infrastructure & Compatibility
+EVM Compatibility: Full support for Solidity smart contracts, Ethereum JSON-RPC (Port 8545), and Web3 tooling (Hardhat, Foundry).
+
+Cosmos Foundation: Built on Cosmos SDK with BFT consensus via CometBFT, supporting native gRPC and REST interfaces.
+
+The "Mirror" Configuration: The chain must be configured with BIP-44 CoinType 60 and EthSecp256k1 keys to ensure Keplr and MetaMask derive the exact same account from one mnemonic.
+
+B. Unified Wallet Experience (The Mirror Sync)
+Real-Time Sync: A transaction performed in Keplr (e.g., MsgSend) must immediately reflect in the MetaMask balance, as they share the same underlying Bank module store.
+
+Multi-Pair Support: Users can manage multiple account pairs (Account #1, Account #2) and transfer tokens between different pairs using either wallet interface.
+
+Bidirectional Address Visibility: The UI must display both formats simultaneously. Clicking "Convert" should show the mathematical derivation from Hex to Bech32.
+
+C. Business Logic: The Digital Safety Deposit Box
+EVM Logic (The Lock): A Solidity contract (VaultManager.sol) serves as the gatekeeper. Users pay a "Registration Fee" in tokens via MetaMask to unlock their vault.
+
+Cosmos Logic (The Vault): A custom Go module (x/vault) manages the actual storage of text-based "secrets."
+
+Inter-VM Communication: Once the EVM contract receives payment, it triggers a Precompile (Go-side hook) that authorizes the user's Cosmos address to write to the x/vault store.
+
+D. Gas Fee Analysis
+Comparison Engine: The system must provide a side-by-side comparison of Gas costs for the same business action (e.g., "Cost to store 1KB of text via EVM SSTORE" vs "Cost to store 1KB via Cosmos KVStore").
+
+Dual-Fee Handling: Transactions signed via MetaMask use Ethereum-style gas; those via Keplr use Cosmos-style gas, both hitting the same native token.
+
+4. Scope & Technical Architecture
+5. Success Metrics (The "Acheiveables")
+Zero-Latency Balance Sync: Sending tokens via mirrorvaultd (CLI) results in an instant balance change in MetaMask.
+
+Mathematical Integrity: Verifying that 0x123... and mirror1... always share the same Private Key.
+
+Cross-VM Success: An action in Solidity successfully "unlocks" a permission in a native Go module.
