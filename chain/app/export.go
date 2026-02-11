@@ -4,11 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
-
-	"cosmossdk.io/collections"
 	storetypes "cosmossdk.io/store/types"
-	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/x/staking"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
@@ -239,6 +236,5 @@ func (app *App) prepForZeroHeightGenesis(ctx sdk.Context, jailAllowedAddrs []str
 	if err != nil {
 		panic(err)
 	}
-
 
 }

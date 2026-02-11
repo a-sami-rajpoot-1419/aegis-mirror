@@ -19,7 +19,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/server/api"
 	"github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
 	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
@@ -33,11 +32,11 @@ import (
 
 const (
 	// Name is the name of the application.
-	Name                 = "mirrorvault"
+	Name = "mirrorvault"
 	// AccountAddressPrefix is the prefix for accounts addresses.
 	AccountAddressPrefix = "mirror"
 	// ChainCoinType is the coin type of the chain.
-	ChainCoinType        = 60
+	ChainCoinType = 60
 )
 
 // DefaultNodeHome default home directories for the application daemon
@@ -59,10 +58,10 @@ type App struct {
 	interfaceRegistry codectypes.InterfaceRegistry
 
 	// keepers
-	AuthKeeper     authkeeper.AccountKeeper
-	BankKeeper     bankkeeper.Keeper
-	StakingKeeper  *stakingkeeper.Keeper
-	DistrKeeper    distrkeeper.Keeper
+	AuthKeeper    authkeeper.AccountKeeper
+	BankKeeper    bankkeeper.Keeper
+	StakingKeeper *stakingkeeper.Keeper
+	DistrKeeper   distrkeeper.Keeper
 
 	// simulation manager
 	sm *module.SimulationManager
@@ -107,8 +106,8 @@ func New(
 		appConfig = depinject.Configs(
 			AppConfig(),
 			depinject.Supply(
-				appOpts,                              // supply app options
-				logger,                               // supply logger
+				appOpts, // supply app options
+				logger,  // supply logger
 				// here alternative options can be supplied to the DI container.
 				// those options can be used f.e to override the default behavior of some modules.
 				// for instance supplying a custom address codec for not using bech32 addresses.
