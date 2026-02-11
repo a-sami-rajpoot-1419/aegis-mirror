@@ -8,9 +8,9 @@ It records the agreed scope, architecture, frozen constants, and the exact build
 ## 0) Current status
 
 - Repo structure is in place:
-  - chain/ (empty placeholder; chain not scaffolded yet)
+  - chain/ (Ignite-scaffolded Cosmos SDK chain; running in WSL2)
   - contracts/ (Hardhat + Solidity scaffolding present)
-  - frontend/ (placeholder)
+  - frontend/ (to be scaffolded)
   - docs/ (constants + dev flow + this state doc)
 - Windows-native Cosmos tooling hit a blocker:
   - Ignite CLI does not compile natively on Windows due to Unix-only process APIs.
@@ -130,9 +130,12 @@ Key points:
 - Chain scaffolding/build/run will be done inside WSL2 Ubuntu-22.04.
 
 ### Docker
-- Keep Docker out for now.
-- Constraint: do not create/publish custom images.
-- Note: generic Cosmos/Tendermint images cannot run the custom chain without building the chain binary.
+- Keep Docker out for v1.
+- All chain build/run happens in WSL2 Ubuntu with user-level tooling and `ignite chain serve`.
+
+### Chain base
+- Chain foundation is an Ignite scaffold that we customize and extend.
+- We integrate `github.com/cosmos/evm` into the scaffold (we are not using Evmos).
 
 ## 7) Planned implementation sequence (no repeats)
 
@@ -171,6 +174,44 @@ This is the authoritative order. Each step has a “Done when” check.
 
 10) Demo script + documentation
 - Done when: a new developer can reproduce the full demo.
+
+## 10) Frontend v1 requirements (baked in early to avoid churn)
+
+These are part of v1 scope and should be implemented without changing frozen constants.
+
+### A) Automated wallet provisioning (silent setup)
+- Keplr: use `window.keplr.experimentalSuggestChain`.
+  - On connect, detect missing chain (e.g., failing `getOfflineSigner(chainId)`), then suggest it.
+  - Use RPC `http://localhost:26657` and REST `http://localhost:1317`.
+- MetaMask: use `wallet_addEthereumChain` and switch automatically.
+  - JSON-RPC: `http://localhost:8545`
+  - chainId: 7777 (hex-encoded for MetaMask request)
+  - currency symbol: MVLT
+
+### B) Token operations tab (send/receive)
+- UI must support sending and receiving tokens for both interfaces:
+  - Cosmos send (Keplr/cosmjs): `MsgSend`.
+  - EVM send (MetaMask/ethers): native value transfer.
+
+### C) Unified faucet button (local dev tool)
+- UI includes a faucet button to fund the connected account.
+- Implementation is local-only: Next.js API route shells out to `mirrorvaultd tx bank send` from the local validator to the connected address.
+- Funding `mirror1...` is equivalent to funding `0x...` due to unified identity.
+
+### D) Fee comparison engine (gas oracle)
+- When preparing a send/unlock/store action, UI shows side-by-side estimated fees:
+  - EVM: `eth_estimateGas`.
+  - Cosmos: REST `simulate` for the equivalent Cosmos tx.
+
+### E) Global mirror state ribbon
+- Display global counters from `x/vault`:
+  - total message count
+  - last message preview
+- Balance sync indicator: show "synced" when the EVM and Cosmos balance views match.
+
+### F) Debug bar + notifications
+- Debug bar streams only UI-level activity (wallet connected, tx submitted/confirmed, errors) and relevant hashes.
+- Add floating notifications (toast-style) that auto-dismiss.
 
 ## 8) How to continue in WSL (next session)
 

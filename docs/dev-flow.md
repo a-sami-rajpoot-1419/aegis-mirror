@@ -1,5 +1,11 @@
 # Dev flow (VS Code first, no Docker)
 
+## WSL2 toolchain
+This repo uses a user-level toolchain in WSL2 (no sudo installs).
+
+Before running any chain, contracts, or frontend commands:
+- `source tools/env.sh`
+
 ## Why Go is required
 The chain is a Cosmos SDK application (a new blockchain binary). Until Go is installed and the chain builds, we can only scaffold non-Go pieces.
 

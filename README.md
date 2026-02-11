@@ -13,7 +13,8 @@ See [docs/constants.md](docs/constants.md).
 
 ## Status
 - Solidity scaffolding is in place.
-- Chain scaffolding is blocked until Go is installed.
+- Chain scaffolding is in place under `chain/` (WSL2 Ubuntu recommended).
 
 ## Next step
-Install Go (1.21+) and then we scaffold the chain under `chain/`.
+- In WSL2 Ubuntu, source `tools/env.sh` to use the repo-local toolchain.
+- Start the chain with `cd chain && ignite chain serve`.
