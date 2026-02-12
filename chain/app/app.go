@@ -599,3 +599,8 @@ func (app *App) GetStoreKeys() []storetypes.StoreKey {
 	}
 	return keys
 }
+
+// LoadHeight loads a particular height
+func (app *App) LoadHeight(height int64) error {
+	return app.LoadVersion(height)
+}
