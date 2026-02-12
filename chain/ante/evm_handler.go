@@ -24,6 +24,8 @@ func newMonoEVMAnteHandler(options HandlerOptions) sdk.AnteHandler {
 				&evmParams,
 				&feeMarketParams,
 			),
+			// Dual address indexing - emit both EVM and Cosmos formats
+			NewDualAddressDecorator(options.AccountKeeper, options.Bech32Prefix),
 		)
 
 		return handler(ctx, tx, simulate)

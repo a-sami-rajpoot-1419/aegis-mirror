@@ -31,6 +31,8 @@ func newCosmosAnteHandler(options HandlerOptions) sdk.AnteHandler {
 			ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
 			ante.NewIncrementSequenceDecorator(options.AccountKeeper),
 			evmante.NewGasWantedDecorator(options.EvmKeeper, options.FeeMarketKeeper, &feeMarketParams),
+			// Dual address indexing - emit both EVM and Cosmos formats
+			NewDualAddressDecorator(options.AccountKeeper, options.Bech32Prefix),
 		)
 
 		return handler(ctx, tx, simulate)

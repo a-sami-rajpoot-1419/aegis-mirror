@@ -520,6 +520,7 @@ func New(
 		FeeMarketKeeper:        &app.FeeMarketKeeper,
 		MaxTxGasWanted:         0, // No limit
 		TxFeeChecker:           nil,
+		Bech32Prefix:           AccountAddressPrefix, // For dual address indexing
 	})
 	app.SetAnteHandler(anteHandler)
 
