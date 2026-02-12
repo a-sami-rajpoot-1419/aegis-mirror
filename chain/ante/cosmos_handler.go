@@ -15,7 +15,7 @@ func newCosmosAnteHandler(options HandlerOptions) sdk.AnteHandler {
 	return func(ctx sdk.Context, tx sdk.Tx, simulate bool) (newCtx sdk.Context, err error) {
 		// Get feemarket params for GasWantedDecorator
 		feeMarketParams := feemarkettypes.DefaultParams()
-		
+
 		handler := sdk.ChainAnteDecorators(
 			ante.NewSetUpContextDecorator(),
 			ante.NewExtensionOptionsDecorator(options.ExtensionOptionChecker),
@@ -32,7 +32,7 @@ func newCosmosAnteHandler(options HandlerOptions) sdk.AnteHandler {
 			ante.NewIncrementSequenceDecorator(options.AccountKeeper),
 			evmante.NewGasWantedDecorator(options.EvmKeeper, options.FeeMarketKeeper, &feeMarketParams),
 		)
-		
+
 		return handler(ctx, tx, simulate)
 	}
 }

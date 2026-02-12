@@ -3,8 +3,6 @@ package cmd
 import (
 	"os"
 
-	"cosmossdk.io/client/v2/autocli"
-
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/config"
 	"github.com/cosmos/cosmos-sdk/server"
@@ -18,9 +16,9 @@ import (
 func NewRootCmd() *cobra.Command {
 	// Create app encoding config with EVM support
 	encodingConfig := app.MakeEncodingConfig()
-	
-	// AutoCLI options (minimal for Phase 1)
-	autoCliOpts := autocli.AppOptions{}
+
+	// AutoCLI options (minimal for Phase 1) - skip autocli enhancement  to avoid address codec requirement
+	// autoCliOpts := autocli.AppOptions{}
 	
 	// Client context
 	clientCtx := client.Context{}.
@@ -69,9 +67,10 @@ func NewRootCmd() *cobra.Command {
 
 	initRootCmd(rootCmd, encodingConfig.TxConfig, moduleBasicManager)
 
-	if err := autoCliOpts.EnhanceRootCommand(rootCmd); err != nil {
-		panic(err)
-	}
+	// Skip AutoCLI enhancement for Phase 1 to avoid address codec requirement
+	// if err := autoCliOpts.EnhanceRootCommand(rootCmd); err != nil {
+	// 	panic(err)
+	// }
 
 	return rootCmd
 }

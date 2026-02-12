@@ -14,7 +14,7 @@ func newMonoEVMAnteHandler(options HandlerOptions) sdk.AnteHandler {
 		// Get default params
 		evmParams := vmtypes.DefaultParams()
 		feeMarketParams := feemarkettypes.DefaultParams()
-		
+
 		handler := sdk.ChainAnteDecorators(
 			evmante.NewEVMMonoDecorator(
 				options.AccountKeeper,
@@ -25,7 +25,7 @@ func newMonoEVMAnteHandler(options HandlerOptions) sdk.AnteHandler {
 				&feeMarketParams,
 			),
 		)
-		
+
 		return handler(ctx, tx, simulate)
 	}
 }
