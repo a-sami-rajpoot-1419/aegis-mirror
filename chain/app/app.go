@@ -23,7 +23,10 @@ import (
 	"github.com/cosmos/cosmos-sdk/server/config"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkmempool "github.com/cosmos/cosmos-sdk/types/mempool"
 	"github.com/cosmos/cosmos-sdk/types/module"
+
+	"github.com/ethereum/go-ethereum/common"
 
 	// Standard SDK modules
 	"github.com/cosmos/cosmos-sdk/x/auth"
@@ -63,6 +66,9 @@ import (
 	"github.com/cosmos/evm/x/vm"
 	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	evmmempool "github.com/cosmos/evm/mempool"
+	"github.com/holiman/uint256"
 
 	"mirrorvault/docs"
 )
@@ -143,6 +149,12 @@ type App struct {
 
 	// Module configurator
 	configurator module.Configurator
+
+	// JSON-RPC support fields
+	clientCtx          client.Context
+	pendingTxListeners []func(txHash common.Hash)
+	evmMempool         sdkmempool.ExtMempool // Lazy-initialized EVM mempool
+	mempoolInitialized bool                  // Track if mempool has been set up
 }
 
 func init() {
@@ -192,19 +204,8 @@ func New(
 		evmChainID = 7777 // default EVM chain ID for mirror-vault
 	}
 
-	// Configure EVM coin info (required for precisebank module initialization)
-	// This must be done before creating any keepers that depend on EVM coin denomination
-	// For 18 decimals: Denom and ExtendedDenom must be the same
-	evmConfigurator := evmtypes.NewEVMConfigurator().
-		WithEVMCoinInfo(evmtypes.EvmCoinInfo{
-			Denom:         "aatom", // 1e-18 of base denom (18 decimals)
-			ExtendedDenom: "aatom", // Must match Denom for 18 decimals
-			DisplayDenom:  "atom",  // human-readable denomination
-			Decimals:      18,      // EVM uses 18 decimals
-		})
-	if err := evmConfigurator.Configure(); err != nil {
-		panic(fmt.Errorf("failed to configure EVM coin info: %w", err))
-	}
+	// Note: EVM coin info will be initialized during InitGenesis from bank denom metadata
+	// Do not configure it here to avoid "EVM coin info already set" panic
 
 	// Get tracer from app options
 	tracer := cast.ToString(appOpts.Get(srvflags.EVMTracer))
@@ -365,6 +366,69 @@ func New(
 	// Note: EVMKeeper circular reference with Erc20 Keeper may be set during keeper construction
 	// If WithErc20Keeper method exists, uncomment: app.EVMKeeper.WithErc20Keeper(&app.Erc20Keeper)
 
+	// Initialize ExperimentalEVMMempool now that all keepers exist
+	// This must be done BEFORE LoadLatestVersion so the mempool is available when chain starts
+	evmMempoolConfig := &evmmempool.EVMMempoolConfig{
+		BlockGasLimit: 30_000_000,        // Default block gas limit
+		MinTip:        uint256.NewInt(0), // Minimum tip for EVM transactions
+	}
+
+	// Context provider that safely handles mempool queries at various chain states
+	// Critical: This is called by mempool during block production, including during genesis
+	contextProvider := func(height int64, prove bool) (sdk.Context, error) {
+		// Return error if stores not loaded yet
+		cms := app.CommitMultiStore()
+		if cms == nil {
+			return sdk.Context{}, fmt.Errorf("commit multi-store not initialized")
+		}
+
+		// Get the latest committed height
+		latestHeight := cms.LatestVersion()
+
+		// For negative height, height 0, or future heights, use latest height
+		if latestHeight == 0 {
+			// No blocks yet, return error
+			return sdk.Context{}, fmt.Errorf("no blocks committed yet")
+		}
+
+		if height <= 0 || height > latestHeight {
+			height = latestHeight
+		}
+
+		// Create a proper query context at the requested height
+		// This context has all stores attached and can query keeper state
+		ctx, err := app.CreateQueryContext(height, prove)
+		if err != nil {
+			return sdk.Context{}, err
+		}
+
+		// CRITICAL: Check if EVM coin info is initialized before allowing queries
+		// If not initialized, return error so mempool skips operations
+		// This prevents nil pointer panics during baseFee calculations
+		coinInfo := app.EVMKeeper.GetEvmCoinInfo(ctx)
+		if coinInfo.Decimals == 0 {
+			return sdk.Context{}, fmt.Errorf("EVM coin info not initialized yet (height %d)", height)
+		}
+
+		return ctx, nil
+	}
+
+	evmMempool := evmmempool.NewExperimentalEVMMempool(
+		contextProvider,
+		logger.With("module", "mempool"),
+		app.EVMKeeper,
+		&app.FeeMarketKeeper,
+		encodingConfig.TxConfig,
+		client.Context{}, // Will be set later via SetClientCtx
+		evmMempoolConfig,
+		1000, // cosmosPoolMaxTx
+	)
+
+	// Inject the EVM mempool into BaseApp
+	bApp.SetMempool(evmMempool)
+	app.evmMempool = evmMempool
+	app.mempoolInitialized = true
+
 	// Create modules
 	modules := []module.AppModule{
 		auth.NewAppModule(app.appCodec, app.AccountKeeper, nil, nil),
@@ -373,6 +437,8 @@ func New(
 		distr.NewAppModule(app.appCodec, app.DistrKeeper, app.AccountKeeper, app.BankKeeper, app.StakingKeeper, nil),
 		consensus.NewAppModule(app.appCodec, app.ConsensusParamsKeeper),
 		genutil.NewAppModule(app.AccountKeeper, app.StakingKeeper, app.BaseApp, encodingConfig.TxConfig),
+		// EVM modules
+		vm.NewAppModule(app.EVMKeeper, app.AccountKeeper, app.BankKeeper, authcodec.NewBech32Codec(AccountAddressPrefix)),
 		feemarket.NewAppModule(app.FeeMarketKeeper),
 		erc20.NewAppModule(app.Erc20Keeper, app.AccountKeeper),
 		precisebank.NewAppModule(app.PreciseBankKeeper, app.BankKeeper, app.AccountKeeper),
@@ -412,6 +478,9 @@ func New(
 	)
 
 	// Set init genesis order
+	// CRITICAL: evm module MUST initialize before precisebank module
+	// because precisebank.InitGenesis validates using GetEVMCoinDecimals()
+	// which is only set during evm.InitGenesis
 	app.ModuleManager.SetOrderInitGenesis(
 		authtypes.ModuleName,
 		banktypes.ModuleName,
@@ -419,11 +488,11 @@ func New(
 		stakingtypes.ModuleName,
 		consensustypes.ModuleName,
 		genutiltypes.ModuleName,
-		// EVM modules
-		feemarkettypes.ModuleName,
-		precisebanktypes.ModuleName,
-		evmtypes.ModuleName,
-		erc20types.ModuleName,
+		// EVM modules - ORDER MATTERS!
+		evmtypes.ModuleName,         // FIRST: Initialize EVM coin config
+		feemarkettypes.ModuleName,   // SECOND: Fee market uses EVM config
+		precisebanktypes.ModuleName, // THIRD: Validates using GetEVMCoinDecimals()
+		erc20types.ModuleName,       // FOURTH: ERC20 depends on EVM + precisebank
 	)
 
 	// Register services
@@ -603,4 +672,31 @@ func (app *App) GetStoreKeys() []storetypes.StoreKey {
 // LoadHeight loads a particular height
 func (app *App) LoadHeight(height int64) error {
 	return app.LoadVersion(height)
+}
+
+// SetClientCtx sets the client context in the app
+func (app *App) SetClientCtx(clientCtx client.Context) {
+	app.clientCtx = clientCtx
+}
+
+// RegisterPendingTxListener registers a listener for pending transactions
+func (app *App) RegisterPendingTxListener(listener func(txHash common.Hash)) {
+	app.pendingTxListeners = append(app.pendingTxListeners, listener)
+}
+
+// GetMempool returns the app's mempool as an ExtMempool
+// The mempool is initialized during app construction after all keepers are created
+func (app *App) GetMempool() sdkmempool.ExtMempool {
+	if app.evmMempool != nil {
+		return app.evmMempool
+	}
+
+	// Fallback to BaseApp's mempool
+	mempool := app.BaseApp.Mempool()
+	if extMempool, ok := mempool.(sdkmempool.ExtMempool); ok {
+		return extMempool
+	}
+
+	// This should never happen since we initialize it in New()
+	panic("mempool not initialized - this is a bug in app construction")
 }

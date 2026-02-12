@@ -24,6 +24,9 @@ import (
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	genutilcli "github.com/cosmos/cosmos-sdk/x/genutil/client/cli"
 
+	// Cosmos EVM server (includes JSON-RPC)
+	evmserver "github.com/cosmos/evm/server"
+
 	"mirrorvault/app"
 )
 
@@ -42,9 +45,13 @@ func initRootCmd(
 		snapshot.Cmd(newApp),
 	)
 
-	server.AddCommandsWithStartCmdOptions(rootCmd, app.DefaultNodeHome, newApp, appExport, server.StartCmdOptions{
-		AddFlags: addModuleInitFlags,
-	})
+	// Use cosmos/evm server.AddCommands (includes JSON-RPC support)
+	// Create a wrapper that returns evmserver.Application
+	appCreator := func(logger log.Logger, db dbm.DB, traceStore io.Writer, appOpts servertypes.AppOptions) evmserver.Application {
+		return newApp(logger, db, traceStore, appOpts).(*app.App)
+	}
+	startOpts := evmserver.NewDefaultStartOptions(appCreator, app.DefaultNodeHome)
+	evmserver.AddCommands(rootCmd, startOpts, appExport, addModuleInitFlags)
 
 	// add keybase, auxiliary RPC, query, genesis, and tx child commands
 	rootCmd.AddCommand(
