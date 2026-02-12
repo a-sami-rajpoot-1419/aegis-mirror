@@ -152,7 +152,8 @@ func appExport(
 	appOpts = viperAppOpts
 	if height != -1 {
 		bApp = app.New(logger, db, traceStore, false, appOpts)
-		if err := bApp.LoadHeight(height); err != nil {
+		// Note: LoadHeight for manual wiring - use LoadLatestVersion with specific height
+		if err := bApp.CommitMultiStore().LoadVersion(height); err != nil {
 			return servertypes.ExportedApp{}, err
 		}
 	} else {
