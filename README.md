@@ -18,9 +18,12 @@ Hybrid Cosmos + EVM L1 with unified identity mapping (one key → `0x…` + `mir
 
 ## Current Status
 
-✅ **Operational**: Chain producing blocks, bank transactions confirmed  
-⏳ **In Progress**: Manual wiring migration (Phase 1 - EVM Integration)  
-🔴 **Pending**: JSON-RPC endpoints, MetaMask connectivity, x/vault module
+✅ **Phase 1 Complete**: Manual wiring migration finished, chain operational  
+✅ **Operational**: Chain producing blocks, genesis setup validated, all keepers working  
+⏳ **In Progress**: JSON-RPC server integration (Phase 2)  
+🔴 **Pending**: MetaMask connectivity, x/vault module
+
+**See [docs/PHASE1_RUNTIME_FIXES.md](docs/PHASE1_RUNTIME_FIXES.md) for Phase 1 fixes and validation.**
 
 **See [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for detailed status and next steps.**
 
