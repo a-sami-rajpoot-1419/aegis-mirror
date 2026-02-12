@@ -158,7 +158,14 @@ func init() {
 func MakeEncodingConfig() evmosencoding.Config {
 	// Use default chain ID for encoding setup (actual chain ID set later in baseapp)
 	// The cosmos/evm MakeConfig automatically registers CustomGetSigner for MsgEthereumTx
-	return evmosencoding.MakeConfig(7777)
+	encodingConfig := evmosencoding.MakeConfig(7777)
+
+	// Register all module interfaces with the encoding config
+	// This is required for genesis commands (add-genesis-account, gentx, etc.)
+	moduleBasicManager := GetBasicModuleManager()
+	moduleBasicManager.RegisterInterfaces(encodingConfig.InterfaceRegistry)
+
+	return encodingConfig
 }
 
 // New returns a reference to an initialized App with manual keeper initialization.
@@ -183,6 +190,20 @@ func New(
 	evmChainID := cast.ToUint64(appOpts.Get(srvflags.EVMChainID))
 	if evmChainID == 0 {
 		evmChainID = 7777 // default EVM chain ID for mirror-vault
+	}
+
+	// Configure EVM coin info (required for precisebank module initialization)
+	// This must be done before creating any keepers that depend on EVM coin denomination
+	// For 18 decimals: Denom and ExtendedDenom must be the same
+	evmConfigurator := evmtypes.NewEVMConfigurator().
+		WithEVMCoinInfo(evmtypes.EvmCoinInfo{
+			Denom:         "aatom", // 1e-18 of base denom (18 decimals)
+			ExtendedDenom: "aatom", // Must match Denom for 18 decimals
+			DisplayDenom:  "atom",  // human-readable denomination
+			Decimals:      18,      // EVM uses 18 decimals
+		})
+	if err := evmConfigurator.Configure(); err != nil {
+		panic(fmt.Errorf("failed to configure EVM coin info: %w", err))
 	}
 
 	// Get tracer from app options
@@ -266,6 +287,9 @@ func New(
 		authtypes.NewModuleAddress(govtypes.ModuleName).String(),
 		runtime.EventService{},
 	)
+
+	// Set consensus params keeper in baseapp (required for chain startup)
+	bApp.SetParamStore(app.ConsensusParamsKeeper.ParamsStore)
 
 	// Phase 2: Keepers that depend on Account/Bank
 
@@ -360,7 +384,7 @@ func New(
 		bank.AppModuleBasic{},
 		staking.AppModuleBasic{},
 		distr.AppModuleBasic{},
-		genutil.AppModuleBasic{genutiltypes.DefaultMessageValidator},
+		genutil.AppModuleBasic{GenTxValidator: genutiltypes.DefaultMessageValidator},
 		consensus.AppModuleBasic{},
 		// EVM modules
 		vm.AppModuleBasic{},
@@ -383,7 +407,8 @@ func New(
 
 	app.ModuleManager.SetOrderEndBlockers(
 		stakingtypes.ModuleName,
-		evmtypes.ModuleName, // EVM end block logic
+		feemarkettypes.ModuleName, // Update EIP-1559 base fee
+		evmtypes.ModuleName,       // EVM end block logic
 	)
 
 	// Set init genesis order
@@ -407,6 +432,10 @@ func New(
 		app.MsgServiceRouter(),
 		app.GRPCQueryRouter(),
 	)
+
+	// Register interfaces before registering services
+	app.BasicModuleManager.RegisterInterfaces(app.interfaceRegistry)
+
 	app.ModuleManager.RegisterServices(app.configurator)
 
 	// Set ante handler with EVM support (custom router from evmd pattern)
@@ -424,6 +453,11 @@ func New(
 		TxFeeChecker:           nil,
 	})
 	app.SetAnteHandler(anteHandler)
+
+	// Wire up InitChainer, BeginBlocker, and EndBlocker (required for manual wiring)
+	app.SetInitChainer(app.InitChainer)
+	app.SetBeginBlocker(app.BeginBlocker)
+	app.SetEndBlocker(app.EndBlocker)
 
 	// Load latest version
 	if loadLatest {
@@ -525,7 +559,7 @@ func GetBasicModuleManager() module.BasicManager {
 		bank.AppModuleBasic{},
 		staking.AppModuleBasic{},
 		distr.AppModuleBasic{},
-		genutil.AppModuleBasic{genutiltypes.DefaultMessageValidator},
+		genutil.AppModuleBasic{GenTxValidator: genutiltypes.DefaultMessageValidator},
 		consensus.AppModuleBasic{},
 		// EVM modules
 		vm.AppModuleBasic{},
@@ -540,4 +574,28 @@ func BlockedAddresses() map[string]bool {
 		result[addr] = true
 	}
 	return result
+}
+
+// DefaultGenesis returns a default genesis from the registered modules
+func (app *App) DefaultGenesis() map[string]json.RawMessage {
+	return app.BasicModuleManager.DefaultGenesis(app.appCodec)
+}
+
+// BeginBlocker application updates every begin block
+func (app *App) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) {
+	return app.ModuleManager.BeginBlock(ctx)
+}
+
+// EndBlocker application updates every end block
+func (app *App) EndBlocker(ctx sdk.Context) (sdk.EndBlock, error) {
+	return app.ModuleManager.EndBlock(ctx)
+}
+
+// GetStoreKeys returns all the stored store keys
+func (app *App) GetStoreKeys() []storetypes.StoreKey {
+	keys := make([]storetypes.StoreKey, 0, len(app.keys))
+	for _, key := range app.keys {
+		keys = append(keys, key)
+	}
+	return keys
 }

@@ -19,7 +19,7 @@ func NewRootCmd() *cobra.Command {
 
 	// AutoCLI options (minimal for Phase 1) - skip autocli enhancement  to avoid address codec requirement
 	// autoCliOpts := autocli.AppOptions{}
-	
+
 	// Client context
 	clientCtx := client.Context{}.
 		WithCodec(encodingConfig.Codec).
