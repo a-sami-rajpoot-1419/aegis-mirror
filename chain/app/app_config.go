@@ -11,6 +11,7 @@ import (
 	stakingmodulev1 "cosmossdk.io/api/cosmos/staking/module/v1"
 	txconfigv1 "cosmossdk.io/api/cosmos/tx/config/v1"
 	"cosmossdk.io/depinject/appconfig"
+
 	_ "github.com/cosmos/cosmos-sdk/x/bank" // import for side-effects
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	_ "github.com/cosmos/cosmos-sdk/x/consensus" // import for side-effects
@@ -22,10 +23,11 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
-	_ "github.com/cosmos/cosmos-sdk/x/auth"             // import for side-effects
-	_ "github.com/cosmos/cosmos-sdk/x/auth/tx/config"   // import for side-effects
+	_ "github.com/cosmos/cosmos-sdk/x/auth"           // import for side-effects
+	_ "github.com/cosmos/cosmos-sdk/x/auth/tx/config" // import for side-effects
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
+	// Cosmos EVM types for store keys
 )
 
 var (
@@ -56,7 +58,7 @@ var (
 					AppName: Name,
 					// NOTE: upgrade module is required to be prioritized
 					PreBlockers: []string{
-						 authtypes.ModuleName,
+						authtypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/preBlockers
 					},
 					// During begin block slashing happens after distr.BeginBlocker so that
@@ -99,8 +101,8 @@ var (
 			{
 				Name: authtypes.ModuleName,
 				Config: appconfig.WrapAny(&authmodulev1.Module{
-					Bech32Prefix:             AccountAddressPrefix,
-					ModuleAccountPermissions: moduleAccPerms,
+					Bech32Prefix:                AccountAddressPrefix,
+					ModuleAccountPermissions:    moduleAccPerms,
 					EnableUnorderedTransactions: false,
 					// By default modules authority is the governance module. This is configurable with the following:
 					// Authority: "group", // A custom module authority can be set using a module name

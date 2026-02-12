@@ -1,23 +1,61 @@
 # The Mirror Vault — Project State (Decisions + Scope + Build Plan)
 
-Last updated: 2026-02-10
+Last updated: 2026-02-11
 
 This document is the handoff for continuing development in a fresh Copilot chat.
 It records the agreed scope, architecture, frozen constants, and the exact build sequence.
 
+**For detailed implementation status, see [IMPLEMENTATION.md](IMPLEMENTATION.md).**
+
 ## 0) Current status
 
+### ✅ Completed (Phase 1: Foundation)
 - Repo structure is in place:
-  - chain/ (Ignite-scaffolded Cosmos SDK chain; running in WSL2)
-  - contracts/ (Hardhat + Solidity scaffolding present)
-  - frontend/ (to be scaffolded)
-  - docs/ (constants + dev flow + this state doc)
-- Windows-native Cosmos tooling hit a blocker:
-  - Ignite CLI does not compile natively on Windows due to Unix-only process APIs.
-  - Decision: build/run the chain inside WSL2 Ubuntu.
-- WSL2 distro available:
-  - Ubuntu-22.04 (WSL2) is installed and running.
-  - Note: the distro name is Ubuntu-22.04 (not Ubuntu).
+  - `chain/` — Ignite-scaffolded Cosmos SDK chain, **fully operational in WSL2**
+  - `contracts/` — Hardhat + Solidity scaffolding present
+  - `frontend/` — to be scaffolded
+  - `docs/` — constants, dev flow, project state, and implementation guide
+  - `tools/` — environment setup and safe build scripts
+- Chain implementation:
+  - **Cosmos SDK v0.53.5** integrated and tested
+  - **CometBFT v0.38.19** producing blocks
+  - Binary `mirrorvaultd` builds successfully via `tools/chain-build-safe.sh`
+  - Genesis initialized with chain-id `mirror-vault-localnet`
+  - 3 test accounts (alice, bob, carol) funded with 1B umvlt each
+  - **Bank transactions confirmed**: Smoke test passed (alice→bob transfer included at height 2225)
+  - REST API and RPC endpoints operational
+- Development environment:
+  - WSL2 Ubuntu-22.04 with Go 1.25.7, Node.js v23.6.0, Ignite CLI v28.6.1
+  - User-local toolchain (no sudo required)
+  - Environment script (`tools/env.sh`) standardizes PATH
+
+### ⚠️ In Progress (Phase 1: EVM Integration)
+- **Manual wiring migration planning**: COMPLETE ✅
+  - Research completed: 3 integration options analyzed
+  - Decision: Manual keeper initialization (hybrid approach)
+  - Documentation: MANUAL_WIRING_MIGRATION_PLAN.md created
+  - Next: Implementation pending approval
+- **EVM Integration Status**:
+  - Dependencies: cosmos/evm v0.5.0 configured ✅
+  - Compilation: All errors fixed ✅
+  - Runtime: Blocked by depinject CustomGetSigner issue
+  - Solution: Migrate to manual wiring (evmd pattern)
+
+### 🔴 Not Started (Phase 1b: Post-Migration)
+- Execute manual wiring migration (5-7 hours estimated)
+- Test JSON-RPC endpoints (port 8545)
+- Validate MetaMask connectivity
+- Test unified identity (Keplr + MetaMask with same key)
+
+### 🔴 Not Started (Phase 2: IBC Integration)
+- IBC keeper initialization
+- Transfer module integration
+- Update Erc20Keeper with TransferKeeper
+
+### 🔴 Not Started (Phase 3: Business Logic)
+- x/vault custom module
+- Stateful precompile (0x0101)
+- Solidity contract deployment and testing
 
 ## 1) What we are building (scope)
 

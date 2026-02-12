@@ -3,6 +3,8 @@ package app
 import (
 	"io"
 
+	"github.com/spf13/cast"
+
 	clienthelpers "cosmossdk.io/client/v2/helpers"
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/depinject"
@@ -21,11 +23,30 @@ import (
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authkeeper "github.com/cosmos/cosmos-sdk/x/auth/keeper"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
+	consensuskeeper "github.com/cosmos/cosmos-sdk/x/consensus/keeper"
 	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
 	"github.com/cosmos/cosmos-sdk/x/genutil"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+
+	// Cosmos EVM imports
+	"github.com/cosmos/evm/x/erc20"
+	erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
+	erc20types "github.com/cosmos/evm/x/erc20/types"
+	"github.com/cosmos/evm/x/feemarket"
+	feemarketkeeper "github.com/cosmos/evm/x/feemarket/keeper"
+	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
+	"github.com/cosmos/evm/x/precisebank"
+	precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
+	precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
+	"github.com/cosmos/evm/x/vm"
+	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	srvflags "github.com/cosmos/evm/server/flags"
 
 	"mirrorvault/docs"
 )
@@ -58,10 +79,17 @@ type App struct {
 	interfaceRegistry codectypes.InterfaceRegistry
 
 	// keepers
-	AuthKeeper    authkeeper.AccountKeeper
-	BankKeeper    bankkeeper.Keeper
-	StakingKeeper *stakingkeeper.Keeper
-	DistrKeeper   distrkeeper.Keeper
+	AuthKeeper            authkeeper.AccountKeeper
+	BankKeeper            bankkeeper.Keeper
+	StakingKeeper         *stakingkeeper.Keeper
+	DistrKeeper           distrkeeper.Keeper
+	ConsensusParamsKeeper consensuskeeper.Keeper
+
+	// Cosmos EVM keepers
+	FeeMarketKeeper   feemarketkeeper.Keeper
+	PreciseBankKeeper precisebankkeeper.Keeper
+	EVMKeeper         *evmkeeper.Keeper
+	Erc20Keeper       erc20keeper.Keeper
 
 	// simulation manager
 	sm *module.SimulationManager
@@ -81,6 +109,8 @@ func AppConfig() depinject.Config {
 	return depinject.Configs(
 		appConfig,
 		depinject.Supply(
+			// Supply EVM custom signers globally - needed for MsgEthereumTx
+			evmtypes.MsgEthereumTxCustomGetSigner,
 			// supply custom module basics
 			map[string]module.AppModuleBasic{
 				genutiltypes.ModuleName: genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
@@ -129,9 +159,29 @@ func New(
 		&app.BankKeeper,
 		&app.StakingKeeper,
 		&app.DistrKeeper,
+		&app.ConsensusParamsKeeper,
 	); err != nil {
 		panic(err)
 	}
+
+	// Get EVM Chain ID from app options
+	evmChainID := cast.ToUint64(appOpts.Get(srvflags.EVMChainID))
+	if evmChainID == 0 {
+		evmChainID = 7777 // default EVM chain ID for mirror-vault
+	}
+
+	// Register EVM store keys manually (cosmos/evm doesn't support depinject yet)
+	// Note: cosmos/evm modules use standard KV and transient keys, no object keys
+	evmStoreKeys := storetypes.NewKVStoreKeys(
+		evmtypes.StoreKey,
+		feemarkettypes.StoreKey,
+		erc20types.StoreKey,
+		precisebanktypes.StoreKey,
+	)
+	evmTransientKeys := storetypes.NewTransientStoreKeys(
+		evmtypes.TransientKey,
+		feemarkettypes.TransientKey,
+	)
 
 	// add to default baseapp options
 	// enable optimistic execution
@@ -139,6 +189,85 @@ func New(
 
 	// build app
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
+
+	// Now initialize EVM keepers after app is built
+	// These keepers cannot be initialized via depinject (cosmos/evm doesn't support it yet)
+
+	// Mount EVM store keys to the multistore
+	for _, key := range evmStoreKeys {
+		app.App.MountStore(key, storetypes.StoreTypeDB)
+	}
+	for _, key := range evmTransientKeys {
+		app.App.MountStore(key, storetypes.StoreTypeTransient)
+	}
+
+	// FeeMarket keeper - manages EIP-1559 base fee
+	app.FeeMarketKeeper = feemarketkeeper.NewKeeper(
+		app.appCodec,
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		evmStoreKeys[feemarkettypes.StoreKey],
+		evmTransientKeys[feemarkettypes.TransientKey],
+	)
+
+	// PreciseBank keeper - enables 18-decimal precision for EVM compatibility
+	app.PreciseBankKeeper = precisebankkeeper.NewKeeper(
+		app.appCodec,
+		evmStoreKeys[precisebanktypes.StoreKey],
+		app.BankKeeper,
+		app.AuthKeeper,
+	)
+
+	// Get tracer from app options
+	tracer := cast.ToString(appOpts.Get(srvflags.EVMTracer))
+
+	// Collect all store keys for EVM keeper
+	// Get keys map from CommitMultiStore
+	allKeys := make(map[string]*storetypes.KVStoreKey)
+	for key, value := range evmStoreKeys {
+		allKeys[key] = value
+	}
+
+	// EVM keeper - core execution engine
+	app.EVMKeeper = evmkeeper.NewKeeper(
+		app.appCodec,
+		evmStoreKeys[evmtypes.StoreKey],
+		evmTransientKeys[evmtypes.TransientKey],
+		allKeys,
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		app.AuthKeeper,
+		app.PreciseBankKeeper,
+		app.StakingKeeper,
+		&app.FeeMarketKeeper,
+		&app.ConsensusParamsKeeper,
+		nil, // Erc20Keeper will be set after initialization
+		evmChainID,
+		tracer,
+	)
+
+	// ERC20 keeper - handles native<->ERC20 conversion
+	// NOTE: We need IBC TransferKeeper for erc20 module, but we don't have IBC integrated yet.
+	// For now, pass nil - this means IBC-related erc20 features won't work until Phase 2.
+	app.Erc20Keeper = erc20keeper.NewKeeper(
+		evmStoreKeys[erc20types.StoreKey],
+		app.appCodec,
+		authtypes.NewModuleAddress(govtypes.ModuleName),
+		app.AuthKeeper,
+		app.BankKeeper,
+		app.EVMKeeper,
+		app.StakingKeeper,
+		nil, // TransferKeeper - will be added when we integrate IBC
+	)
+
+	// Create EVM modules for later wiring
+	// Note: These modules cannot be registered with depinject ModuleManager
+	// They will be handled through custom routing in the BaseApp
+	_ = vm.NewAppModule(app.EVMKeeper, app.AuthKeeper, app.BankKeeper, app.AuthKeeper.AddressCodec())
+	_ = feemarket.NewAppModule(app.FeeMarketKeeper)
+	_ = erc20.NewAppModule(app.Erc20Keeper, app.AuthKeeper)
+	_ = precisebank.NewAppModule(app.PreciseBankKeeper, app.BankKeeper, app.AuthKeeper)
+
+	// TODO: Wire EVM modules into msg/query routing
+	// For now, keepers are initialized and will be available for AnteHandler and mempool
 
 	/****  Module Options ****/
 

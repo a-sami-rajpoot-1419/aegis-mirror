@@ -3,6 +3,7 @@ package cmd
 import (
 	cmtcfg "github.com/cometbft/cometbft/config"
 	serverconfig "github.com/cosmos/cosmos-sdk/server/config"
+	cosmosevmserverconfig "github.com/cosmos/evm/server/config"
 )
 
 // initCometBFTConfig helps to override default CometBFT Config values.
@@ -17,45 +18,49 @@ func initCometBFTConfig() *cmtcfg.Config {
 	return cfg
 }
 
+// EVMAppConfig extends the default SDK config with EVM-specific settings
+type EVMAppConfig struct {
+	serverconfig.Config `mapstructure:",squash"`
+
+	EVM     cosmosevmserverconfig.EVMConfig     `mapstructure:"evm"`
+	JSONRPC cosmosevmserverconfig.JSONRPCConfig `mapstructure:"json-rpc"`
+	TLS     cosmosevmserverconfig.TLSConfig     `mapstructure:"tls"`
+}
+
 // initAppConfig helps to override default appConfig template and configs.
 // return "", nil if no custom configuration is required for the application.
 func initAppConfig() (string, interface{}) {
-	// The following code snippet is just for reference.
-	type CustomAppConfig struct {
-		serverconfig.Config `mapstructure:",squash"`
-	}
-
 	// Optionally allow the chain developer to overwrite the SDK's default
 	// server config.
 	srvCfg := serverconfig.DefaultConfig()
-	// The SDK's default minimum gas price is set to "" (empty value) inside
-	// app.toml. If left empty by validators, the node will halt on startup.
-	// However, the chain developer can set a default app.toml value for their
-	// validators here.
-	//
-	// In summary:
-	// - if you leave srvCfg.MinGasPrices = "", all validators MUST tweak their
-	//   own app.toml config,
-	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
-	//   own app.toml to override, or use this default value.
-	//
-	// In tests, we set the min gas prices to 0.
-	// srvCfg.MinGasPrices = "0stake"
 
-	customAppConfig := CustomAppConfig{
-		Config: *srvCfg,
+	// Set minimum gas prices to 0 for development
+	// In production, validators should set this to a non-zero value
+	srvCfg.MinGasPrices = "0umvlt"
+
+	// EVM configuration
+	evmCfg := cosmosevmserverconfig.DefaultEVMConfig()
+	evmCfg.EVMChainID = 7777 // Mirror Vault EVM chain ID
+
+	// JSON-RPC configuration
+	jsonrpcCfg := cosmosevmserverconfig.DefaultJSONRPCConfig()
+	jsonrpcCfg.Enable = true
+	jsonrpcCfg.Address = "0.0.0.0:8545"
+	jsonrpcCfg.API = []string{"eth", "net", "web3", "txpool", "debug"}
+	// Note: EnableUnsafeCORS was removed in v0.5.0 - use reverse proxy for CORS in production // Enable CORS for local development
+
+	// TLS configuration (disabled for local development)
+	tlsCfg := cosmosevmserverconfig.DefaultTLSConfig()
+
+	customAppConfig := EVMAppConfig{
+		Config:  *srvCfg,
+		EVM:     *evmCfg,
+		JSONRPC: *jsonrpcCfg,
+		TLS:     *tlsCfg,
 	}
 
-	customAppTemplate := serverconfig.DefaultConfigTemplate
-	// Edit the default template file
-	//
-	// customAppTemplate := serverconfig.DefaultConfigTemplate + `
-	// [wasm]
-	// # This is the maximum sdk gas (wasm and storage) that we allow for any x/wasm "smart" queries
-	// query_gas_limit = 300000
-	// # This is the number of wasm vm instances we keep cached in memory for speed-up
-	// # Warning: this is currently unstable and may lead to crashes, best to keep for 0 unless testing locally
-	// lru_size = 0`
+	// Extend the default template with EVM sections
+	customAppTemplate := serverconfig.DefaultConfigTemplate + cosmosevmserverconfig.DefaultEVMConfigTemplate
 
 	return customAppTemplate, customAppConfig
 }

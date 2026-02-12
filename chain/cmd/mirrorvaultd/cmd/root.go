@@ -6,6 +6,7 @@ import (
 	"cosmossdk.io/client/v2/autocli"
 	"cosmossdk.io/depinject"
 	"cosmossdk.io/log"
+
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/config"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -30,7 +31,10 @@ func NewRootCmd() *cobra.Command {
 
 	if err := depinject.Inject(
 		depinject.Configs(app.AppConfig(),
-			depinject.Supply(log.NewNopLogger()),
+			depinject.Supply(
+				log.NewNopLogger(),
+				// EVM custom signers are supplied in app.AppConfig()
+			),
 			depinject.Provide(
 				ProvideClientContext,
 			),
@@ -43,8 +47,8 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	rootCmd := &cobra.Command{
-		Use:   app.Name + "d",
-		Short: "mirrorvault node",
+		Use:           app.Name + "d",
+		Short:         "mirrorvault node",
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			// set the default command outputs
@@ -72,7 +76,6 @@ func NewRootCmd() *cobra.Command {
 			return server.InterceptConfigsPreRunHandler(cmd, customAppTemplate, customAppConfig, customCMTConfig)
 		},
 	}
-
 
 	initRootCmd(rootCmd, clientCtx.TxConfig, moduleBasicManager)
 
