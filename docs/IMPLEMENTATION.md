@@ -39,11 +39,15 @@
 
 | Component | Status | Blocker |
 |-----------|--------|---------|
-| Cosmos EVM | Not started | Needs integration |
-| JSON-RPC (8545) | Not started | Requires cosmos/evm |
-| x/vault Module | Not started | Custom business logic |
-| Stateful Precompile | Not started | Requires cosmos/evm + x/vault |
-| Unified Identity | Not started | EthAccount/EthSecp256k1 wiring |
+| Cosmos EVM | ✅ Integrated | JSON-RPC operational on port 8545 |
+| x/vault Module | Not started | Message storage with credit gating |
+| x/nft Module | Not started | ERC721-compatible NFT storage |
+| Precompile 0x0101 | Not started | Message storage: unlock, storeMessage, queries |
+| Precompile 0x0102 | Not started | NFT system: mint, transfer, ownerOf, balanceOf |
+| VaultGate.sol | Not started | Solidity interface to 0x0101 precompile |
+| MirrorNFT.sol | Not started | ERC721 interface to 0x0102 precompile |
+| Dual Address Indexing | ✅ Complete | All transactions emit both 0x and mirror1 formats |
+| Unified Identity | ✅ Complete | EthSecp256k1 + BIP-44 coin type 60 |
 | Canonical Ports | Blocked | Port conflict with evmos |
 
 ---

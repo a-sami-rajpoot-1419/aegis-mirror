@@ -3,8 +3,8 @@ package ante
 import (
 	"fmt"
 
-	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
 	"github.com/ethereum/go-ethereum/common"
 
 	"mirrorvault/utils"
@@ -12,11 +12,11 @@ import (
 
 const (
 	// Event attribute keys for dual address indexing
-	AttributeKeyEVMAddress     = "evm_address"
-	AttributeKeyCosmosAddress  = "cosmos_address"
-	AttributeKeyDualFormat     = "dual_address"
-	AttributeKeySender         = "sender"
-	AttributeKeyRecipient      = "recipient"
+	AttributeKeyEVMAddress    = "evm_address"
+	AttributeKeyCosmosAddress = "cosmos_address"
+	AttributeKeyDualFormat    = "dual_address"
+	AttributeKeySender        = "sender"
+	AttributeKeyRecipient     = "recipient"
 
 	// Event types
 	EventTypeDualAddress = "dual_address_index"

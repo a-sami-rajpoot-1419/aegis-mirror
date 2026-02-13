@@ -74,15 +74,31 @@ func ExtractAddressesFromTx(tx sdk.Tx) []sdk.AccAddress {
 	addresses := make([]sdk.AccAddress, 0)
 	seen := make(map[string]bool)
 
-	// Extract from messages
-	for _, msg := range tx.GetMsgs() {
-		// Get signers (senders)
-		signers, err := msg.GetSigners()
+	// Try to get feeTx interface for signer extraction
+	feeTx, ok := tx.(sdk.FeeTx)
+	if ok && feeTx != nil {
+		// Get fee payer as primary signer
+		feePayerBytes := feeTx.FeePayer()
+		if len(feePayerBytes) > 0 {
+			feePayer := sdk.AccAddress(feePayerBytes)
+			feePayerStr := feePayer.String()
+			if !seen[feePayerStr] {
+				addresses = append(addresses, feePayer)
+				seen[feePayerStr] = true
+			}
+		}
+	}
+
+	// Try to get sigTx interface
+	sigTx, ok := tx.(interface{ GetSigners() ([][]byte, error) })
+	if ok {
+		signers, err := sigTx.GetSigners()
 		if err == nil {
 			for _, signer := range signers {
-				signerStr := signer.String()
+				signerAddr := sdk.AccAddress(signer)
+				signerStr := signerAddr.String()
 				if !seen[signerStr] {
-					addresses = append(addresses, sdk.AccAddress(signer))
+					addresses = append(addresses, signerAddr)
 					seen[signerStr] = true
 				}
 			}

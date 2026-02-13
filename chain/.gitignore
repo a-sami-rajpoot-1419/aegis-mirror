@@ -8,3 +8,18 @@ build/
 *.dot
 *.log
 *.ign
+
+# Chain binary
+mirrorvaultd
+
+# Test and data directories
+testdata/
+data/
+
+# Coverage
+coverage/
+*.out
+
+# Temporary files
+*.tmp
+*.swp

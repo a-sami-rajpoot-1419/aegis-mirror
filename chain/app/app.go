@@ -71,6 +71,19 @@ import (
 	"github.com/holiman/uint256"
 
 	"mirrorvault/docs"
+
+	// Custom modules
+	"mirrorvault/x/vault"
+	vaultkeeper "mirrorvault/x/vault/keeper"
+	vaulttypes "mirrorvault/x/vault/types"
+
+	"mirrorvault/x/nft"
+	nftkeeper "mirrorvault/x/nft/keeper"
+	nfttypes "mirrorvault/x/nft/types"
+
+	// Custom precompiles
+	nftprecompile "mirrorvault/x/nft/precompile"
+	vaultprecompile "mirrorvault/x/vault/precompile"
 )
 
 const (
@@ -139,6 +152,10 @@ type App struct {
 	PreciseBankKeeper precisebankkeeper.Keeper
 	EVMKeeper         *evmkeeper.Keeper
 	Erc20Keeper       erc20keeper.Keeper
+
+	// Custom module keepers
+	VaultKeeper vaultkeeper.Keeper
+	NFTKeeper   nftkeeper.Keeper
 
 	// Module management
 	ModuleManager      *module.Manager
@@ -237,6 +254,9 @@ func New(
 		feemarkettypes.StoreKey,
 		erc20types.StoreKey,
 		precisebanktypes.StoreKey,
+		// Custom modules
+		vaulttypes.StoreKey,
+		nfttypes.StoreKey,
 	)
 
 	app.tkeys = storetypes.NewTransientStoreKeys(
@@ -366,6 +386,33 @@ func New(
 	// Note: EVMKeeper circular reference with Erc20 Keeper may be set during keeper construction
 	// If WithErc20Keeper method exists, uncomment: app.EVMKeeper.WithErc20Keeper(&app.Erc20Keeper)
 
+	// Phase 4: Custom modules
+
+	// Vault Keeper
+	app.VaultKeeper = vaultkeeper.NewKeeper(
+		app.appCodec,
+		app.keys[vaulttypes.StoreKey],
+	)
+
+	// NFT Keeper
+	app.NFTKeeper = nftkeeper.NewKeeper(
+		app.appCodec,
+		app.keys[nfttypes.StoreKey],
+	)
+
+	// Register custom precompiles
+	vaultPrecompileAddr := common.HexToAddress("0x0000000000000000000000000000000000000101")
+	nftPrecompileAddr := common.HexToAddress("0x0000000000000000000000000000000000000102")
+
+	vaultPrecompile := vaultprecompile.NewVaultGatePrecompile(app.VaultKeeper, AccountAddressPrefix)
+	nftPrecompile := nftprecompile.NewMirrorNFTPrecompile(app.NFTKeeper, AccountAddressPrefix)
+
+	app.EVMKeeper.RegisterStaticPrecompile(vaultPrecompileAddr, vaultPrecompile)
+	app.EVMKeeper.RegisterStaticPrecompile(nftPrecompileAddr, nftPrecompile)
+
+	// TODO: Precompile registration - needs custom EVM integration
+	// Will be added in next iteration via custom state hooks
+
 	// Initialize ExperimentalEVMMempool now that all keepers exist
 	// This must be done BEFORE LoadLatestVersion so the mempool is available when chain starts
 	evmMempoolConfig := &evmmempool.EVMMempoolConfig{
@@ -442,6 +489,9 @@ func New(
 		feemarket.NewAppModule(app.FeeMarketKeeper),
 		erc20.NewAppModule(app.Erc20Keeper, app.AccountKeeper),
 		precisebank.NewAppModule(app.PreciseBankKeeper, app.BankKeeper, app.AccountKeeper),
+		// Custom modules
+		vault.NewAppModule(app.VaultKeeper),
+		nft.NewAppModule(app.NFTKeeper),
 	}
 
 	// Create basic module manager
@@ -457,6 +507,9 @@ func New(
 		feemarket.AppModuleBasic{},
 		erc20.AppModuleBasic{},
 		precisebank.AppModuleBasic{},
+		// Custom modules
+		vault.AppModuleBasic{},
+		nft.AppModuleBasic{},
 	)
 
 	// Create module manager
@@ -469,12 +522,18 @@ func New(
 		// EVM modules
 		feemarkettypes.ModuleName, // Update EIP-1559 base fee
 		evmtypes.ModuleName,       // EVM begin block logic
+		// Custom modules
+		vaulttypes.ModuleName,
+		nfttypes.ModuleName,
 	)
 
 	app.ModuleManager.SetOrderEndBlockers(
 		stakingtypes.ModuleName,
 		feemarkettypes.ModuleName, // Update EIP-1559 base fee
 		evmtypes.ModuleName,       // EVM end block logic
+		// Custom modules
+		vaulttypes.ModuleName,
+		nfttypes.ModuleName,
 	)
 
 	// Set init genesis order
@@ -493,6 +552,9 @@ func New(
 		feemarkettypes.ModuleName,   // SECOND: Fee market uses EVM config
 		precisebanktypes.ModuleName, // THIRD: Validates using GetEVMCoinDecimals()
 		erc20types.ModuleName,       // FOURTH: ERC20 depends on EVM + precisebank
+		// Custom modules
+		vaulttypes.ModuleName,
+		nfttypes.ModuleName,
 	)
 
 	// Register services
@@ -636,6 +698,9 @@ func GetBasicModuleManager() module.BasicManager {
 		feemarket.AppModuleBasic{},
 		erc20.AppModuleBasic{},
 		precisebank.AppModuleBasic{},
+		// Custom modules
+		vault.AppModuleBasic{},
+		nft.AppModuleBasic{},
 	)
 }
 func BlockedAddresses() map[string]bool {

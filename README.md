@@ -19,9 +19,11 @@ Hybrid Cosmos + EVM L1 with unified identity mapping (one key → `0x…` + `mir
 ## Current Status
 
 ✅ **Phase 1 Complete**: Manual wiring migration finished, chain operational  
-✅ **Operational**: Chain producing blocks, genesis setup validated, all keepers working  
-⏳ **In Progress**: JSON-RPC server integration (Phase 2)  
-🔴 **Pending**: MetaMask connectivity, x/vault module
+✅ **JSON-RPC Server**: Operational on port 8545, MetaMask-ready  
+✅ **Dual Address Indexing**: All transactions emit both 0x and mirror1 formats  
+✅ **gRPC Services**: Query endpoints registered and functional  
+⏳ **In Progress**: x/vault module and 0x0101 precompile implementation  
+🔴 **Pending**: VaultGate.sol deployment, frontend UI
 
 **See [docs/PHASE1_RUNTIME_FIXES.md](docs/PHASE1_RUNTIME_FIXES.md) for Phase 1 fixes and validation.**
 
@@ -89,8 +91,20 @@ curl http://127.0.0.1:13177/cosmos/base/tendermint/v1beta1/node_info | jq '.defa
 
 ## Next Milestones
 
-1. Free ports 26657/1317 (stop evmos container)
-2. Integrate Cosmos EVM + JSON-RPC (port 8545)
-3. Implement x/vault module + precompile (0x0101)
-4. Deploy VaultGate.sol via Hardhat
-5. Test cross-VM workflow (EVM ↔ Cosmos)
+1. ~~Free ports 26657/1317~~ (using alternative ports) ✅
+2. ~~Integrate Cosmos EVM + JSON-RPC~~ (port 8545) ✅
+3. ~~Dual address indexing~~ (all transactions emit both formats) ✅
+4. **Implement x/vault module** (credit system + message storage)
+5. **Implement x/nft module** (ERC721-compatible NFT storage)
+6. **Implement precompiles**:
+   - 0x0101: Message storage (unlock, storeMessage, queries)
+   - 0x0102: NFT system (mint, transfer, ownerOf, balanceOf)
+7. **Deploy smart contracts** via Hardhat:
+   - VaultGate.sol (message storage interface)
+   - MirrorNFT.sol (ERC721 NFT interface)
+8. **Test dual-wallet workflows**:
+   - Message storage: Both wallets can store, global state visible to all
+   - NFT system: Mint/transfer from both wallets, dual address in responses
+   - Fee comparison between EVM and Cosmos paths
+   - Cross-pair transfers (Alice → Bob, etc.)
+   - Dual address indexing in all transaction events

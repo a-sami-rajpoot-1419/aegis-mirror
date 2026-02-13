@@ -103,27 +103,62 @@ Key points:
   - Cosmos SDK app
   - CometBFT consensus
   - EVM module exposing JSON-RPC
-  - Custom module: x/vault
-  - Custom bridge: stateful precompile
+  - Custom module: **x/vault** (stores messages, manages credits)
+  - Custom module: **x/nft** (ERC721-compatible NFT storage)
+  - Custom bridges: stateful precompiles
+    - **0x0101** (Message storage): unlock(), storeMessage(string), getMessageCount(), getLastMessage()
+    - **0x0102** (NFT system): mint(), transfer(), ownerOf(), balanceOf(), tokenURI()
+  - **Dual address indexing**: ante decorator emits both 0x and mirror1 formats in every transaction event
 
 - Solidity (Hardhat)
-  - VaultGate.sol calls precompile address and emits event
+  - **VaultGate.sol** exposes message storage precompile (0x0101):
+    - `payToUnlock()`: calls precompile to grant credit
+    - `storeMessage(string)`: calls precompile to store message
+    - `getMessageCount(address)`: view function via precompile
+    - `getLastMessage(address)`: view function via precompile
+  - **MirrorNFT.sol** exposes NFT precompile (0x0102) - ERC721 compatible:
+    - `mint(uint256 tokenId, string uri)`: mint NFT via precompile
+    - `transferFrom(address from, address to, uint256 tokenId)`: transfer NFT
+    - `ownerOf(uint256 tokenId)`: returns owner with dual addresses
+    - `balanceOf(address owner)`: returns NFT count for address
+    - `tokenURI(uint256 tokenId)`: returns metadata URI
 
 - Frontend (Next.js)
   - Pro UI, single-page split view
   - Connect MetaMask + Keplr
-  - Show both address formats
+  - Show both address formats (0x + mirror1) for connected account
   - Send coin actions (EVM + Cosmos)
-  - Vault actions (pay/unlock + store message)
-  - Logs/debug bar
+  - Vault actions: store message from EITHER wallet with fee comparison
+  - Global state display: messageCount and lastMessage (same for all users)
+  - Logs/debug bar (shows dual addresses in transaction events)
 
 ### Business logic (v1)
+
+**Feature 1: Message Storage (Credit-Gated)**
 - Storage credit model: counter-based credits per address
-  - payToUnlock(): +1 credit
-  - MsgStoreSecret: requires credit > 0, consumes 1 credit, stores message
-- Stored message data:
-  - messageCount: total messages stored
-  - lastMessage: most recent message
+  - `payToUnlock()`: +1 credit (MetaMask only for v1)
+  - `storeMessage()`: Both wallets can store:
+    - **MetaMask**: VaultGate.storeMessage() → precompile 0x0101 → x/vault
+    - **Keplr**: MsgStoreSecret → x/vault directly
+  - Both paths: require credit > 0, consume 1 credit, update global state
+- Global state (visible to ALL accounts):
+  - `messageCount`: total messages stored chain-wide
+  - `lastMessage`: most recent message stored by anyone
+- Per-address state:
+  - `StorageCredit[address]`: credits available for that address
+
+**Feature 2: NFT System (Open Minting)**
+- ERC721-compatible NFT standard (tokenId + tokenURI)
+- Open minting: anyone can mint NFTs (no restrictions)
+- Both wallets can mint and transfer:
+  - **MetaMask**: MirrorNFT.mint() / transferFrom() → precompile 0x0102 → x/nft
+  - **Keplr**: MsgMintNFT / MsgTransferNFT → x/nft directly
+- Storage: Cosmos x/nft module (single source of truth)
+- Per-NFT state:
+  - `NFTs[tokenId]`: owner (mirror1... format), tokenURI, mintedAt
+- Per-address state:
+  - `ownedNFTs[address]`: array of tokenIds owned
+- **Dual address responses**: All queries return owner in BOTH formats (0x + mirror1)
 
 ## 4) End-to-end flows (v1)
 
@@ -241,11 +276,13 @@ These are part of v1 scope and should be implemented without changing frozen con
   - EVM: `eth_estimateGas`.
   - Cosmos: REST `simulate` for the equivalent Cosmos tx.
 
-### E) Global mirror state ribbon
-- Display global counters from `x/vault`:
-  - total message count
-  - last message preview
-- Balance sync indicator: show "synced" when the EVM and Cosmos balance views match.
+### E) Global chain state display
+- Display global counters from `x/vault` (same for ALL users):
+  - Total message count (chain-wide)
+  - Last message preview (most recent from any user)
+- Balance display: show balance in both MVLT and wei formats
+- **Dual address display**: Show both 0x and mirror1 format for connected account
+- Transaction logs: Display both address formats in event data
 
 ### F) Debug bar + notifications
 - Debug bar streams only UI-level activity (wallet connected, tx submitted/confirmed, errors) and relevant hashes.

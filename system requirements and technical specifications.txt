@@ -46,45 +46,70 @@ Message: MsgStoreSecret (Sender, Text).
 Logic: A "Pre-Run" check that verifies if the user has an "Unlock Credit" (granted by the EVM side).
 
 4. Phase 2: Inter-VM Business Logic
-The "Mirror Lock" Workflow
-Solidity Contract (VaultGate.sol): A simple contract with a payToUnlock() function. When called, it emits an Unlocked(address user) event.
+The "Mirror Vault" Workflow (Enhanced Dual-Wallet Design)
 
-Go Precompile: You will implement a Stateful Precompile in the Go source code.
+Solidity Contract (VaultGate.sol): 
+- `payToUnlock()`: Grants storage credit (MetaMask only for v1)
+- `storeMessage(string)`: Stores message via precompile (NEW - MetaMask path)
+- `getMessageCount(address)`: View function to query credits
+- `getLastMessage(address)`: View function to query last message
+- Emits events with dual address formats (0x and mirror1)
 
-Address: 0x00...000101 (Custom).
+Go Precompile (0x0101): Stateful precompile with 4 functions:
+1. `unlock()`: Increments StorageCredit[caller] in x/vault
+2. `storeMessage(string)`: Checks credit, stores message, decrements credit, updates global count/lastMessage
+3. `getMessageCount(address)`: Query function (view/static call)
+4. `getLastMessage(address)`: Query function (view/static call)
 
-Function: When payToUnlock() is called in Solidity, it executes the Precompile.
-
-Action: The Precompile writes directly to the Cosmos SDK x/vault state to increment a "StorageCredit" counter for that user's address.
+Key Design Principles:
+- **Unified State**: Both wallets write to SAME on-chain x/vault state
+- **Global Visibility**: messageCount and lastMessage are chain-wide (not per-user)
+- **Dual Indexing**: All transactions emit both 0x and mirror1 addresses in events
+- **User Choice**: Users pick which wallet to use based on fee comparison
 
 5. Phase 3: Frontend & UI Specification
 Layout Design
 Theme: Dark Mode (Background: #0D1117, Primary: #58A6FF).
 
-Top Bar: * Left: Mirror Vault Logo.
+Top Bar:
+- Left: Mirror Vault Logo
+- Right: "Connect Wallets" button (MetaMask + Keplr)
+- Connected Account Display: Shows BOTH 0x and mirror1 addresses
 
-Right: "Connect Wallets" button (Triggering both MetaMask and Keplr).
+Main Dashboard (Unified View):
+- **Account Section**: 
+  - Displays both address formats (0x and mirror1) for connected account
+  - Shows balance in both MVLT and wei formats
+  - Balance is unified (same value in both wallets)
 
-Main Dashboard (Split View):
+- **Global State Section** (visible to ALL users):
+  - Total message count (chain-wide)
+  - Last message preview (most recent from any user)
+  - Same data regardless of which account is connected
 
-Left Column (EVM): Displays 0x address, ETH balance, and "Pay to Unlock" button.
+- **Action Section** (Send Message):
+  - Text input for message
+  - **Fee Comparison**: Shows estimated gas for both paths:
+    - MetaMask: VaultGate.storeMessage() via eth_estimateGas
+    - Keplr: MsgStoreSecret via /cosmos/tx/v1beta1/simulate
+  - User chooses which wallet to use
+  - "Send via MetaMask" and "Send via Keplr" buttons
 
-Right Column (Cosmos): Displays mirror1 address, native coin balance, and "Save Secret" text area.
-
-Center Conversion Tool: A box that takes any 0x address and instantly shows the mirror1 equivalent using the Bech32 encoding formula.
+- **Center Conversion Tool**: 
+  - Input any address (0x or mirror1)
+  - Instantly shows both formats
+  - Uses chain/utils/address.go conversion functions
 
 Real-Time Logs (The Debug Bar)
 Position: Bottom 20% of the screen.
-
 Style: Terminal-like (Black background, green text).
 
 Functionality:
-
-Stream every event from the chain (JSON-RPC and gRPC).
-
-"Copy TX Hash" button next to every log.
-
-Highlight errors in red.
+- Stream events from chain (JSON-RPC and gRPC)
+- **Dual Address Display**: Show both 0x and mirror1 in transaction events
+- "Copy TX Hash" button next to every log
+- Highlight errors in red
+- Show which wallet was used (MetaMask/Keplr)
 
 6. Phase 4: Testing & Documentation
 Documentation Protocol
