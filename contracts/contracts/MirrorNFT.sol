@@ -17,14 +17,13 @@ contract MirrorNFT {
     /// @param uri The metadata URI (IPFS, Arweave, or HTTPS)
     function mint(uint256 tokenId, string calldata uri) external {
         (bool ok, ) = MIRROR_NFT_PRECOMPILE.call(
-            abi.encodeWithSignature("mint(uint256,string)", tokenId, uri)
+            abi.encodeWithSignature("mint(address,uint256,string)", msg.sender, tokenId, uri)
         );
         require(ok, "precompile mint failed");
 
-        // Query owner to get both address formats for event
-        (address owner, string memory ownerCosmos, ) = this.ownerOf(tokenId);
-        
-        emit NFTMinted(tokenId, owner, ownerCosmos, uri);
+        // Emit event without querying owner (avoid external call issue)
+        // The precompile already emits its own dual-address event
+        emit NFTMinted(tokenId, msg.sender, "", uri);
     }
 
     /// @notice Transfer NFT to another address
@@ -40,11 +39,9 @@ contract MirrorNFT {
         );
         require(ok, "precompile transfer failed");
 
-        // Query addresses for event (dual format)
-        (address ownerEvm, string memory ownerCosmos, ) = this.ownerOf(tokenId);
-        
-        // Convert 'to' address to cosmos format for event (precompile will handle conversion)
-        emit NFTTransferred(tokenId, from, to, "", ownerCosmos);
+        // Emit event without querying owner (avoid external call issue)
+        // The precompile already emits its own dual-address event
+        emit NFTTransferred(tokenId, from, to, "", "");
     }
 
     /// @notice Get the owner of an NFT with BOTH address formats

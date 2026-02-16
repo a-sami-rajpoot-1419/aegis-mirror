@@ -12,7 +12,8 @@ const config: HardhatUserConfig = {
     mirrorVaultLocal: {
       url: "http://127.0.0.1:8545",
       chainId: 7777,
-      accounts: ["0x418e8edb0fa64960955b0c1d074e2312a9f31a905d28b531874098847eb01bcd"],
+      accounts: ["0x1ab42cc412b618bdea3a599e3c9bae199ebf030895b039e9db1e30dafb12b727"],
+      gasPrice: 2000000000, // 2 gwei - above the 1 gwei base fee
     },
   },
 };

@@ -10,14 +10,14 @@ contract VaultGate {
 
     address public constant MIRROR_VAULT_PRECOMPILE = 0x0000000000000000000000000000000000000101;
 
-    /// @notice Grant storage credit to msg.sender by paying 1 MIRROR token
-    /// @dev Requires payment of exactly 1 MIRROR (1e18 wei). Calls precompile unlock(), increments credit in x/vault
-    /// @dev Implements requirement: "need of tokens to unlock the message and nft module (1 mirror)"
+    /// @notice Grant storage credit to msg.sender by paying 1 MVLT token
+    /// @dev Requires payment of at least 1 MVLT (1e18 wei). Calls precompile unlock(), increments credit in x/vault
+    /// @dev Implements requirement: "need of tokens to unlock the message and nft module (1 mvlt)"
     function payToUnlock() external payable {
-        // Enforce payment requirement: must send at least 1 MIRROR
-        // In EVM: 1 MIRROR = 1e18 wei
-        // In Cosmos: 1 MIRROR = 1,000,000 amirror (micro-mirror)
-        require(msg.value >= 1e18, "Must pay at least 1 MIRROR token");
+        // Enforce payment requirement: must send at least 1 MVLT
+        // In EVM: 1 MVLT = 1e18 wei
+        // In Cosmos: 1 MVLT = 1,000,000 umvlt (micro-mvlt)
+        require(msg.value >= 1e18, "Must pay at least 1 MVLT token");
 
         (bool ok, ) = MIRROR_VAULT_PRECOMPILE.call{value: msg.value}(
             abi.encodeWithSignature("unlock()")
