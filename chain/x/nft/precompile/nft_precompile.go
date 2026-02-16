@@ -114,7 +114,7 @@ func (p *MirrorNFTPrecompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly b
 		if readOnly {
 			return nil, errors.New("cannot call transferFrom in read-only mode")
 		}
-		return p.transferFrom(sdkCtx, evm, contract.Caller(), args)
+		return p.transferFrom(sdkCtx, evm, evm.Origin, args)
 	case bytesEqual(selector, ownerOfSelector):
 		return p.ownerOf(sdkCtx, args)
 	case bytesEqual(selector, balanceOfSelector):

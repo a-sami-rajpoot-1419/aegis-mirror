@@ -13,8 +13,9 @@ import (
 	"mirrorvault/x/vault/types"
 )
 
-// Minimum payment required to purchase a credit (1 MVLT = 1,000,000 umvlt)
-const CreditCostUmvlt = 1_000_000
+// Minimum payment required to purchase a credit.
+// The chain's EVM denomination uses 18 decimals: 1 MVLT = 1e18 umvlt.
+const CreditCostUmvlt = 1_000_000_000_000_000_000
 
 // Keeper maintains the state for the vault module
 type Keeper struct {
@@ -45,29 +46,39 @@ func (k Keeper) Logger(ctx sdk.Context) log.Logger {
 // This enforces the requirement: "need of tokens to unlock the message and nft module (1 mirror)"
 // Payment is transferred from the user to the vault module account
 func (k Keeper) AddCreditWithPayment(ctx sdk.Context, address string, paidAmount sdk.Coins) error {
-	// Validate payment amount (must be at least 1 MVLT = 1,000,000 umvlt)
+	return k.AddCreditWithPaymentFrom(ctx, address, address, paidAmount)
+}
+
+// AddCreditWithPaymentFrom adds a storage credit to `beneficiary` after validating payment,
+// transferring funds from `payer` to the vault module account.
+//
+// This is required for EVM wrapper contracts: `msg.value` is first transferred to the
+// precompile address by the EVM, so the precompile should move funds from its own address
+// to the module account (payer = precompile) while crediting the EOA (beneficiary = tx origin).
+func (k Keeper) AddCreditWithPaymentFrom(ctx sdk.Context, beneficiary string, payer string, paidAmount sdk.Coins) error {
+	// Validate payment amount (must be at least 1 MVLT = 1e18 umvlt)
 	requiredPayment := sdk.NewCoins(sdk.NewInt64Coin("umvlt", CreditCostUmvlt))
 
 	if !paidAmount.IsAllGTE(requiredPayment) {
 		return fmt.Errorf("insufficient payment: got %s, required %s", paidAmount.String(), requiredPayment.String())
 	}
 
-	// Convert address string to SDK account address for bank operations
-	addr, err := sdk.AccAddressFromBech32(address)
+	// Convert payer address string to SDK account address for bank operations
+	payerAddr, err := sdk.AccAddressFromBech32(payer)
 	if err != nil {
-		return fmt.Errorf("invalid address %s: %w", address, err)
+		return fmt.Errorf("invalid payer address %s: %w", payer, err)
 	}
 
 	// Transfer payment from user to vault module
-	if err := k.bankKeeper.SendCoinsFromAccountToModule(sdk.UnwrapSDKContext(ctx), addr, types.ModuleName, paidAmount); err != nil {
+	if err := k.bankKeeper.SendCoinsFromAccountToModule(sdk.UnwrapSDKContext(ctx), payerAddr, types.ModuleName, paidAmount); err != nil {
 		return fmt.Errorf("failed to process payment: %w", err)
 	}
 
 	// Payment successful - now add the credit
 	store := ctx.KVStore(k.storeKey)
-	key := append(types.UserCreditsKey, []byte(address)...)
+	key := append(types.UserCreditsKey, []byte(beneficiary)...)
 
-	currentCredits := k.GetCredits(ctx, address)
+	currentCredits := k.GetCredits(ctx, beneficiary)
 	newCredits := currentCredits + 1
 
 	creditBytes := make([]byte, 8)
@@ -75,7 +86,8 @@ func (k Keeper) AddCreditWithPayment(ctx sdk.Context, address string, paidAmount
 	store.Set(key, creditBytes)
 
 	k.Logger(ctx).Info("credit purchased with payment",
-		"address", address,
+		"beneficiary", beneficiary,
+		"payer", payer,
 		"payment", paidAmount.String(),
 		"new_credits", newCredits,
 	)

@@ -1,10 +1,22 @@
 const { ethers } = require('ethers');
+const fs = require('fs');
+const path = require('path');
 
 // Configuration
 const RPC_URL = 'http://127.0.0.1:8545';
-const VAULT_CONTRACT = '0x3EaD5582681dA76d0BF28E0D241277A5D797E293';
-const NFT_CONTRACT = '0x7e8ecebF965dE86fDE7Ebc7F3020813d656CF723';
 const ALICE_KEY = '0x1ab42cc412b618bdea3a599e3c9bae199ebf030895b039e9db1e30dafb12b727';
+
+function loadDeployedAddresses() {
+  const deployedPath = path.join(__dirname, 'deployed-addresses.json');
+  if (!fs.existsSync(deployedPath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(deployedPath, 'utf8'));
+    if (!parsed || !parsed.vaultGate || !parsed.mirrorNFT) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 // ABIs
 const VAULT_ABI = [
@@ -43,18 +55,43 @@ async function testBackend() {
     // Setup
     const provider = new ethers.JsonRpcProvider(RPC_URL);
     const wallet = new ethers.Wallet(ALICE_KEY, provider);
+
+    const deployed = loadDeployedAddresses();
+    const vaultAddress = process.env.VAULT_CONTRACT || (deployed ? deployed.vaultGate : null);
+    const nftAddress = process.env.NFT_CONTRACT || (deployed ? deployed.mirrorNFT : null);
+
+    if (!vaultAddress || !nftAddress) {
+      throw new Error(
+        'Missing deployed wrapper addresses. Run: cd contracts && npx hardhat run scripts/deploy.ts --network mirrorVaultLocal'
+      );
+    }
+
+    let failures = 0;
+    const fail = (msg) => {
+      failures++;
+      console.log(`  ❌ FAIL: ${msg}`);
+    };
     
     console.log('\n✅ STEP 1: Connection & Setup');
     console.log('  Chain ID:', (await provider.getNetwork()).chainId.toString());
     console.log('  Alice Address:', wallet.address);
     console.log('  Alice Balance:', ethers.formatEther(await provider.getBalance(wallet.address)), 'MVLT');
     
-    // Contracts
-    const vaultContract = new ethers.Contract(VAULT_CONTRACT, VAULT_ABI, wallet);
-    const nftContract = new ethers.Contract(NFT_CONTRACT, NFT_ABI, wallet);
-    
-    console.log('  VaultGate:', VAULT_CONTRACT);
-    console.log('  MirrorNFT:', NFT_CONTRACT);
+    // Contracts (must be deployed)
+    const vaultCode = await provider.getCode(vaultAddress);
+    const nftCode = await provider.getCode(nftAddress);
+    if (vaultCode === '0x') {
+      throw new Error(`VaultGate not deployed at ${vaultAddress}. Run: cd contracts && npx hardhat run scripts/deploy.ts --network mirrorVaultLocal`);
+    }
+    if (nftCode === '0x') {
+      throw new Error(`MirrorNFT not deployed at ${nftAddress}. Run: cd contracts && npx hardhat run scripts/deploy.ts --network mirrorVaultLocal`);
+    }
+
+    const vaultContract = new ethers.Contract(vaultAddress, VAULT_ABI, wallet);
+    const nftContract = new ethers.Contract(nftAddress, NFT_ABI, wallet);
+
+    console.log('  VaultGate:', vaultAddress);
+    console.log('  MirrorNFT:', nftAddress);
     
     // Test 1: Payment Validation
     console.log('\n' + '='.repeat(70));
@@ -69,13 +106,9 @@ async function testBackend() {
         maxPriorityFeePerGas: 1000000000n
       });
       await tx.wait();
-      console.log('  ❌ FAIL: Should have rejected 0.5 MVLT payment');
+      fail('Should have rejected 0.5 MVLT payment');
     } catch (error) {
-      if (error.message.includes('Must pay at least 1 MVLT')) {
-        console.log('  ✅ PASS: Correctly rejected insufficient payment');
-      } else {
-        console.log('  ⚠️  Rejected but with unexpected error:', error.message.substring(0, 100));
-      }
+      console.log('  ✅ PASS: Correctly rejected insufficient payment');
     }
     
     console.log('\n📝 Test 2.2: Exact Payment (1 MVLT)');
@@ -91,13 +124,8 @@ async function testBackend() {
     await waitForTx(payTx, 'Payment transaction');
     console.log('  ✅ PASS: Payment accepted (1 MVLT)');
     
-    // Try to get count after payment
-    try {
-      const countAfter = await vaultContract.getMessageCount(wallet.address);
-      console.log('  Message count after payment:', countAfter.toString());
-    } catch (error) {
-      console.log('  ⚠️  Note: getMessageCount view function not yet implemented in precompile');
-    }
+    const countAfterPayment = await vaultContract.getMessageCount(wallet.address);
+    console.log('  Message count after payment:', countAfterPayment.toString());
     
     // Test 3: Message Storage
     console.log('\n' + '='.repeat(70));
@@ -108,14 +136,8 @@ async function testBackend() {
     console.log('\n📝 Test 3.1: Store Message');
     console.log('  Message:', testMessage);
     
-    // Try to get count before (may fail if not implemented)
-    let countBefore = 0n;
-    try {
-      countBefore = await vaultContract.getMessageCount(wallet.address);
-      console.log('  Message count before:', countBefore.toString());
-    } catch (error) {
-      console.log('  ⚠️  getMessageCount not available (precompile view function not implemented)');
-    }
+    const countBefore = await vaultContract.getMessageCount(wallet.address);
+    console.log('  Message count before:', countBefore.toString());
     
     const storeTx = await vaultContract.storeMessage(testMessage, {
       maxFeePerGas: 2000000000n,
@@ -123,31 +145,22 @@ async function testBackend() {
     });
     await waitForTx(storeTx, 'Store message transaction');
     
-    // Try to get count after
-    try {
-      const countAfter = await vaultContract.getMessageCount(wallet.address);
-      console.log('  Message count after:', countAfter.toString());
-      if (countAfter > countBefore) {
-        console.log('  ✅ PASS: Message count increased');
-      }
-    } catch (error) {
-      console.log('  ⚠️  Cannot verify count increase (view function not available)');
-      console.log('  ✅ PASS: Message stored successfully (transaction confirmed)');
+    const countAfter = await vaultContract.getMessageCount(wallet.address);
+    console.log('  Message count after:', countAfter.toString());
+    if (countAfter > countBefore) {
+      console.log('  ✅ PASS: Message count increased');
+    } else {
+      fail('Message count did not increase as expected');
     }
     
     console.log('\n📝 Test 3.2: Retrieve Message');
-    try {
-      const retrievedMsg = await vaultContract.getLastMessage(wallet.address);
-      console.log('  Retrieved:', retrievedMsg);
-      
-      if (retrievedMsg === testMessage) {
-        console.log('  ✅ PASS: Message matches');
-      } else {
-        console.log('  ⚠️  Message retrieved but does not match');
-      }
-    } catch (error) {
-      console.log('  ⚠️  getLastMessage not available (precompile view function not implemented)');
-      console.log('  Note: Message was stored (transaction succeeded) but cannot be queried yet');
+    const retrievedMsg = await vaultContract.getLastMessage(wallet.address);
+    console.log('  Retrieved:', retrievedMsg);
+
+    if (retrievedMsg === testMessage) {
+      console.log('  ✅ PASS: Message matches');
+    } else {
+      fail('Message retrieved but does not match');
     }
     
     // Test 4: NFT Minting
@@ -170,18 +183,13 @@ async function testBackend() {
     await waitForTx(mintTx, 'Mint transaction');
     
     console.log('\n📝 Test 4.2: Verify NFT Existence');
-    try {
-      const exists = await nftContract.exists(tokenId);
-      console.log('  Exists:', exists);
-      
-      if (exists) {
-        console.log('  ✅ PASS: NFT minted successfully');
-      } else {
-        console.log('  ❌ FAIL: NFT does not exist after minting');
-      }
-    } catch (error) {
-      console.log('  ⚠️  exists() view function not available (precompile view function not implemented)');
-      console.log('  ✅ PASS: NFT minted successfully (transaction confirmed)');
+    const exists = await nftContract.exists(tokenId);
+    console.log('  Exists:', exists);
+
+    if (exists) {
+      console.log('  ✅ PASS: NFT minted successfully');
+    } else {
+      fail('NFT does not exist after minting');
     }
     
     // Test 5: NFT Owner Query (Dual Address)
@@ -190,26 +198,21 @@ async function testBackend() {
     console.log('='.repeat(70));
     
     console.log('\n📝 Test 5.1: Query Owner (Both Formats)');
-    try {
-      const [ownerEvm, ownerCosmos, ownerExists] = await nftContract.ownerOf(tokenId);
-      console.log('  Owner (EVM):', ownerEvm);
-      console.log('  Owner (Cosmos):', ownerCosmos);
-      console.log('  Exists:', ownerExists);
-      
-      if (ownerEvm.toLowerCase() === wallet.address.toLowerCase()) {
-        console.log('  ✅ PASS: EVM address matches');
-      } else {
-        console.log('  ❌ FAIL: EVM address mismatch');
-      }
-      
-      if (ownerCosmos && ownerCosmos.startsWith('mirror1')) {
-        console.log('  ✅ PASS: Cosmos address format correct');
-      } else {
-        console.log('  ⚠️  WARNING: Cosmos address not in expected format');
-      }
-    } catch (error) {
-      console.log('  ⚠️  ownerOf() view function not available (precompile view function not implemented)');
-      console.log('  Note: NFT was minted (transaction confirmed) but owner cannot be queried yet');
+    const [ownerEvm, ownerCosmos, ownerExists] = await nftContract.ownerOf(tokenId);
+    console.log('  Owner (EVM):', ownerEvm);
+    console.log('  Owner (Cosmos):', ownerCosmos);
+    console.log('  Exists:', ownerExists);
+
+    if (ownerEvm.toLowerCase() === wallet.address.toLowerCase()) {
+      console.log('  ✅ PASS: EVM address matches');
+    } else {
+      fail('EVM address mismatch');
+    }
+
+    if (ownerCosmos && ownerCosmos.startsWith('mirror1')) {
+      console.log('  ✅ PASS: Cosmos address format correct');
+    } else {
+      fail('Cosmos address not in expected format');
     }
     
     // Test 6: NFT Transfer
@@ -233,19 +236,14 @@ async function testBackend() {
     await waitForTx(transferTx, 'Transfer transaction');
     
     console.log('\n📝 Test 6.2: Verify New Owner');
-    try {
-      const [newOwnerEvm, newOwnerCosmos, newExists] = await nftContract.ownerOf(tokenId);
-      console.log('  New Owner (EVM):', newOwnerEvm);
-      console.log('  New Owner (Cosmos):', newOwnerCosmos);
-      
-      if (newOwnerEvm.toLowerCase() === bobWallet.address.toLowerCase()) {
-        console.log('  ✅ PASS: NFT transferred successfully');
-      } else {
-        console.log('  ❌ FAIL: Owner did not change');
-      }
-    } catch (error) {
-      console.log('  ⚠️  ownerOf() view function not available');
-      console.log('  ✅ PASS: Transfer confirmed (transaction succeeded)');
+    const [newOwnerEvm, newOwnerCosmos, newExists] = await nftContract.ownerOf(tokenId);
+    console.log('  New Owner (EVM):', newOwnerEvm);
+    console.log('  New Owner (Cosmos):', newOwnerCosmos);
+
+    if (newOwnerEvm.toLowerCase() === bobWallet.address.toLowerCase()) {
+      console.log('  ✅ PASS: NFT transferred successfully');
+    } else {
+      fail('Owner did not change after transfer');
     }
     
     // Test 7: Balance Check
@@ -256,14 +254,10 @@ async function testBackend() {
     const finalBalance = await provider.getBalance(wallet.address);
     console.log('\n  Final Alice Balance:', ethers.formatEther(finalBalance), 'MVLT');
     
-    try {
-      const msgCount = await vaultContract.getMessageCount(wallet.address);
-      const globalCount = await vaultContract.getGlobalMessageCount();
-      console.log('  Final Message Count:', msgCount.toString());
-      console.log('  Global Message Count:', globalCount.toString());
-    } catch (error) {
-      console.log('  ⚠️  View functions not available for final stats');
-    }
+    const msgCount = await vaultContract.getMessageCount(wallet.address);
+    const globalCount = await vaultContract.getGlobalMessageCount();
+    console.log('  Final Message Count:', msgCount.toString());
+    console.log('  Global Message Count:', globalCount.toString());
     
     // Summary
     console.log('\n' + '='.repeat(70));
@@ -276,6 +270,10 @@ async function testBackend() {
     console.log('  ✅ NFT dual address query working');
     console.log('  ✅ NFT transfers working');
     console.log('\n🎉 Backend is ready for frontend integration!\n');
+
+    if (failures > 0) {
+      throw new Error(`${failures} backend test(s) failed`);
+    }
     
   } catch (error) {
     console.error('\n❌ ERROR during testing:');

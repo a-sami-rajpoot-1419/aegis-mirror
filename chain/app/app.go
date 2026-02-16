@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 
 	"github.com/spf13/cast"
 
@@ -86,6 +87,21 @@ import (
 	vaultprecompile "mirrorvault/x/vault/precompile"
 )
 
+func init() {
+	// Ensure custom precompiles are ACTIVE by default.
+	// Without this, eth_call / eth_estimateGas will treat 0x0101/0x0102 as empty-code addresses
+	// and return empty bytes, causing Solidity view wrappers to revert on abi.decode.
+	evmmoduleDefaults := append([]string{}, evmtypes.AvailableStaticPrecompiles...)
+	evmmoduleDefaults = append(evmmoduleDefaults,
+		vaultprecompile.VaultGateAddress,
+		nftprecompile.MirrorNFTAddress,
+	)
+	slices.Sort(evmmoduleDefaults)
+	evmmoduleDefaults = slices.Compact(evmmoduleDefaults)
+
+	evmtypes.DefaultStaticPrecompiles = evmmoduleDefaults
+}
+
 const (
 	// Name is the name of the application.
 	Name = "mirrorvault"
@@ -106,6 +122,8 @@ var (
 		distrtypes.ModuleName:          nil,
 		stakingtypes.BondedPoolName:    {authtypes.Burner, stakingtypes.ModuleName},
 		stakingtypes.NotBondedPoolName: {authtypes.Burner, stakingtypes.ModuleName},
+		// Mirror Vault custom modules
+		vaulttypes.ModuleName: nil,
 		// Cosmos EVM modules
 		evmtypes.ModuleName:         {authtypes.Minter, authtypes.Burner}, // EVM mints/burns for bridges
 		feemarkettypes.ModuleName:   nil,                                  // Fee market doesn't hold funds

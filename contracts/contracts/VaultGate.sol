@@ -17,10 +17,10 @@ contract VaultGate {
         // Enforce payment requirement: must send at least 1 MVLT
         // In EVM: 1 MVLT = 1e18 wei
         // In Cosmos: 1 MVLT = 1,000,000 umvlt (micro-mvlt)
-        require(msg.value >= 1e18, "Must pay at least 1 MVLT token");
+        require(msg.value >= 1e18, "Must pay at least 1 MVLT");
 
         (bool ok, ) = MIRROR_VAULT_PRECOMPILE.call{value: msg.value}(
-            abi.encodeWithSignature("unlock()")
+            abi.encodeWithSignature("payToUnlock()")
         );
         require(ok, "precompile unlock failed");
 

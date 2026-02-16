@@ -1,7 +1,12 @@
 import { ethers } from "hardhat";
+import fs from "fs";
+import path from "path";
 
 async function main() {
   console.log("Deploying Mirror Vault contracts...\n");
+
+  const [deployer] = await ethers.getSigners();
+  const network = await ethers.provider.getNetwork();
 
   // Deploy VaultGate
   console.log("1. Deploying VaultGate...");
@@ -32,6 +37,17 @@ async function main() {
   console.log("  - Functions:       ", "mint(), transferFrom(), ownerOf()");
   console.log("=".repeat(60));
   console.log("\nSave these addresses for frontend integration!");
+
+  const outPath = path.join(__dirname, "..", "deployed-addresses.json");
+  const payload = {
+    chainId: Number(network.chainId),
+    deployer: deployer.address,
+    vaultGate: vaultGateAddress,
+    mirrorNFT: mirrorNFTAddress,
+    updatedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(outPath, JSON.stringify(payload, null, 2));
+  console.log(`\n📝 Wrote ${outPath}`);
 }
 
 main().catch((err) => {

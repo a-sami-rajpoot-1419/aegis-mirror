@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"math/big"
 
-	sdkmath "cosmossdk.io/math"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/holiman/uint256"
 
 	"mirrorvault/utils"
 	vaultkeeper "mirrorvault/x/vault/keeper"
+	vaulttypes "mirrorvault/x/vault/types"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 )
 
 const (
@@ -24,12 +27,12 @@ const (
 
 var (
 	// Function selectors (first 4 bytes of keccak256 of function signature)
-	payToUnlockSelector           = []byte{0x3c, 0x6a, 0x24, 0x42} // payToUnlock()
-	storeMessageSelector          = []byte{0x72, 0x0f, 0x4e, 0x72} // storeMessage(string)
-	getMessageCountSelector       = []byte{0xe6, 0x7c, 0x0e, 0xd3} // getMessageCount(address)
-	getLastMessageSelector        = []byte{0xf5, 0x8c, 0x6f, 0x89} // getLastMessage(address)
-	getGlobalMessageCountSelector = []byte{0x8d, 0xa5, 0xcb, 0x5b} // getGlobalMessageCount()
-	getGlobalLastMessageSelector  = []byte{0xe3, 0xf2, 0x09, 0x17} // getGlobalLastMessage()
+	payToUnlockSelector           = []byte{0xbd, 0xe8, 0x39, 0x38} // payToUnlock()
+	storeMessageSelector          = []byte{0xd4, 0xe3, 0x6b, 0xa7} // storeMessage(string)
+	getMessageCountSelector       = []byte{0xd7, 0x36, 0x3c, 0xe7} // getMessageCount(address)
+	getLastMessageSelector        = []byte{0xe0, 0xc0, 0x1b, 0xfe} // getLastMessage(address)
+	getGlobalMessageCountSelector = []byte{0xb3, 0x2c, 0x53, 0x91} // getGlobalMessageCount()
+	getGlobalLastMessageSelector  = []byte{0x8a, 0xa4, 0x49, 0xd8} // getGlobalLastMessage()
 )
 
 // VaultGatePrecompile implements the vault operations precompile
@@ -102,12 +105,12 @@ func (p *VaultGatePrecompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly b
 		}
 		// Convert uint256.Int to big.Int
 		valueBig := contract.Value().ToBig()
-		return p.payToUnlock(sdkCtx, contract.Caller(), valueBig)
+		return p.payToUnlock(sdkCtx, evm, contract, valueBig)
 	case bytesEqual(selector, storeMessageSelector):
 		if readOnly {
 			return nil, errors.New("cannot call storeMessage in read-only mode")
 		}
-		return p.storeMessage(sdkCtx, contract.Caller(), args)
+		return p.storeMessage(sdkCtx, evm.Origin, args)
 	case bytesEqual(selector, getMessageCountSelector):
 		return p.getMessageCount(sdkCtx, args)
 	case bytesEqual(selector, getLastMessageSelector):
@@ -123,34 +126,54 @@ func (p *VaultGatePrecompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly b
 
 // payToUnlock adds a storage credit to the caller AFTER validating payment
 // Implements requirement: "need of tokens to unlock the message and nft module (1 mirror)"
-// Payment must be at least 1 MIRROR (1,000,000 amirror)
-func (p *VaultGatePrecompile) payToUnlock(ctx sdk.Context, caller common.Address, value *big.Int) ([]byte, error) {
-	// Convert caller address to Cosmos bech32
-	cosmosAddr, err := utils.EthAddressToBech32(caller.Hex(), p.bech32Prefix)
+func (p *VaultGatePrecompile) payToUnlock(ctx sdk.Context, evm *vm.EVM, contract *vm.Contract, value *big.Int) ([]byte, error) {
+	beneficiary := evm.Origin
+	precompileAddr := contract.Address()
+
+	// Convert beneficiary (EOA / tx origin) to Cosmos bech32
+	beneficiaryBech32, err := utils.EthAddressToBech32(beneficiary.Hex(), p.bech32Prefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert address: %w", err)
 	}
 
-	// Validate payment amount (value is in wei, which maps to umvlt)
-	// 1 MVLT = 1e18 wei in EVM = 1,000,000 umvlt in Cosmos
-	// For simplicity: 1 MVLT = 1,000,000 umvlt
-	if value == nil || value.Cmp(big.NewInt(1_000_000)) < 0 {
-		return nil, fmt.Errorf("insufficient payment: sent %s, required 1000000 umvlt (1 MVLT)",
-			valueToString(value))
+	// Validate payment amount (EVM uses 18 decimals for MVLT; 1 MVLT = 1e18 base units)
+	// NOTE: The EVM module requires denom metadata for `umvlt` with display exponent 18.
+	if value == nil || value.Cmp(big.NewInt(1_000_000_000_000_000_000)) < 0 {
+		return nil, fmt.Errorf("Must pay at least 1 MVLT")
 	}
 
-	// Convert value to SDK coins
-	payment := sdk.NewCoins(sdk.NewCoin("umvlt", sdkmath.NewIntFromBigInt(value)))
+	// During EVM execution, Cosmos bank spendables may not reflect EVM value transfers yet.
+	// So we move funds using the EVM StateDB: precompile (callee) -> vault module account.
+	amountU256, overflow := uint256.FromBig(value)
+	if overflow {
+		return nil, fmt.Errorf("payment amount overflows uint256")
+	}
+	if amountU256 == nil {
+		return nil, fmt.Errorf("invalid payment amount")
+	}
 
-	// Add credit with payment validation
-	if err := p.vaultKeeper.AddCreditWithPayment(ctx, cosmosAddr, payment); err != nil {
+	moduleAcc := authtypes.NewModuleAddress(vaulttypes.ModuleName)
+	moduleEthAddr := common.BytesToAddress(moduleAcc)
+
+	precompileBal := evm.StateDB.GetBalance(precompileAddr)
+	if precompileBal == nil || precompileBal.Cmp(amountU256) < 0 {
+		return nil, fmt.Errorf("insufficient precompile balance for payment")
+	}
+
+	evm.StateDB.SubBalance(precompileAddr, amountU256, tracing.BalanceChangeTransfer)
+	evm.StateDB.AddBalance(moduleEthAddr, amountU256, tracing.BalanceChangeTransfer)
+
+	// Payment successful - now add the credit to the beneficiary (tx origin)
+	if err := p.vaultKeeper.AddCredit(ctx, beneficiaryBech32); err != nil {
 		return nil, fmt.Errorf("failed to add credit: %w", err)
 	}
 
 	ctx.Logger().Info("credit purchased via payToUnlock",
-		"caller_evm", caller.Hex(),
-		"caller_cosmos", cosmosAddr,
-		"payment", payment.String(),
+		"beneficiary_evm", beneficiary.Hex(),
+		"beneficiary_cosmos", beneficiaryBech32,
+		"payer_evm", precompileAddr.Hex(),
+		"payment_wei", valueToString(value),
+		"module_evm", moduleEthAddr.Hex(),
 	)
 
 	// Return success (empty bytes for void function)
