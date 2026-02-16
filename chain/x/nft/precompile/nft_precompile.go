@@ -8,7 +8,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 
 	"mirrorvault/utils"
 	nftkeeper "mirrorvault/x/nft/keeper"
@@ -23,12 +25,21 @@ const (
 
 var (
 	// Function selectors (first 4 bytes of keccak256 of function signature)
-	mintSelector          = []byte{0xa0, 0x71, 0x2d, 0x68} // mint(uint256,string)
+	mintSelector          = []byte{0xd3, 0xfc, 0x98, 0x64} // mint(address,uint256,string)
 	transferFromSelector  = []byte{0x23, 0xb8, 0x72, 0xdd} // transferFrom(address,address,uint256)
 	ownerOfSelector       = []byte{0x63, 0x52, 0x21, 0x1e} // ownerOf(uint256)
 	balanceOfSelector     = []byte{0x70, 0xa0, 0x82, 0x31} // balanceOf(address)
 	tokenURISelector      = []byte{0xc8, 0x7b, 0x56, 0xdd} // tokenURI(uint256)
-	tokensOfOwnerSelector = []byte{0x8b, 0x2c, 0x7f, 0x55} // tokensOfOwner(address)
+	tokensOfOwnerSelector = []byte{0x84, 0x62, 0x15, 0x1c} // tokensOfOwner(address)
+
+	// Event signatures (keccak256 hash of event signature)
+	// event NFTMinted(address indexed to, string cosmosAddr, uint256 indexed tokenId, string uri)
+	nftMintedEvent = crypto.Keccak256Hash([]byte("NFTMinted(address,string,uint256,string)"))
+	// event NFTTransferred(address indexed from, string fromCosmos, address indexed to, string toCosmos, uint256 indexed tokenId)
+	nftTransferredEvent = crypto.Keccak256Hash([]byte("NFTTransferred(address,string,address,string,uint256)"))
+	// Standard ERC-721 Transfer event for MetaMask detection
+	// event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+	transferEvent = crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)"))
 )
 
 // MirrorNFTPrecompile implements the NFT operations precompile
@@ -98,12 +109,12 @@ func (p *MirrorNFTPrecompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly b
 		if readOnly {
 			return nil, errors.New("cannot call mint in read-only mode")
 		}
-		return p.mint(sdkCtx, contract.Caller(), args)
+		return p.mint(sdkCtx, evm, args)
 	case bytesEqual(selector, transferFromSelector):
 		if readOnly {
 			return nil, errors.New("cannot call transferFrom in read-only mode")
 		}
-		return p.transferFrom(sdkCtx, contract.Caller(), args)
+		return p.transferFrom(sdkCtx, evm, contract.Caller(), args)
 	case bytesEqual(selector, ownerOfSelector):
 		return p.ownerOf(sdkCtx, args)
 	case bytesEqual(selector, balanceOfSelector):
@@ -118,17 +129,13 @@ func (p *MirrorNFTPrecompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly b
 }
 
 // mint mints a new NFT
-func (p *MirrorNFTPrecompile) mint(ctx sdk.Context, caller common.Address, args []byte) ([]byte, error) {
-	// Convert caller address to Cosmos bech32
-	cosmosAddr, err := utils.EthAddressToBech32(caller.Hex(), p.bech32Prefix)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert address: %w", err)
-	}
-
-	// Decode arguments (uint256 tokenId, string uri)
+func (p *MirrorNFTPrecompile) mint(ctx sdk.Context, evm *vm.EVM, args []byte) ([]byte, error) {
+	// Decode arguments (address to, uint256 tokenId, string uri)
+	addressType, _ := abi.NewType("address", "", nil)
 	uint256Type, _ := abi.NewType("uint256", "", nil)
 	stringType, _ := abi.NewType("string", "", nil)
 	argsList := abi.Arguments{
+		{Type: addressType},
 		{Type: uint256Type},
 		{Type: stringType},
 	}
@@ -138,19 +145,38 @@ func (p *MirrorNFTPrecompile) mint(ctx sdk.Context, caller common.Address, args 
 		return nil, fmt.Errorf("failed to decode arguments: %w", err)
 	}
 
-	tokenId := decoded[0].(*big.Int).Uint64()
-	uri := decoded[1].(string)
+	to := decoded[0].(common.Address)
+	tokenId := decoded[1].(*big.Int).Uint64()
+	uri := decoded[2].(string)
+
+	// Convert caller address to Cosmos bech32
+	cosmosAddr, err := utils.EthAddressToBech32(to.Hex(), p.bech32Prefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert address: %w", err)
+	}
 
 	// Mint NFT
 	if err := p.nftKeeper.MintNFT(ctx, tokenId, cosmosAddr, uri); err != nil {
 		return nil, err
 	}
 
+	// Emit dual address event (custom)
+	p.emitNFTMintedEvent(ctx, to, cosmosAddr, tokenId, uri)
+
+	// Emit standard ERC-721 Transfer event for MetaMask detection
+	// Transfer(address(0), to, tokenId) - mint signature
+	p.emitStandardTransferEvent(evm, common.Address{}, to, tokenId)
+
 	return []byte{}, nil
 }
 
 // transferFrom transfers an NFT
-func (p *MirrorNFTPrecompile) transferFrom(ctx sdk.Context, caller common.Address, args []byte) ([]byte, error) {
+// Supports all cross-pair scenarios:
+// - MetaMask to MetaMask
+// - MetaMask to Keplr (same result - addresses convert to same backend format)
+// - Keplr to MetaMask (same result - addresses convert to same backend format)
+// - Keplr to Keplr
+func (p *MirrorNFTPrecompile) transferFrom(ctx sdk.Context, evm *vm.EVM, caller common.Address, args []byte) ([]byte, error) {
 	// Decode arguments (address from, address to, uint256 tokenId)
 	addressType, _ := abi.NewType("address", "", nil)
 	uint256Type, _ := abi.NewType("uint256", "", nil)
@@ -169,41 +195,63 @@ func (p *MirrorNFTPrecompile) transferFrom(ctx sdk.Context, caller common.Addres
 	to := decoded[1].(common.Address)
 	tokenId := decoded[2].(*big.Int).Uint64()
 
-	// Validate caller is owner
+	// Convert all addresses to Cosmos bech32 format for unified state management
 	callerCosmos, err := utils.EthAddressToBech32(caller.Hex(), p.bech32Prefix)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert caller address: %w", err)
+		return nil, fmt.Errorf("failed to convert caller address %s: %w", caller.Hex(), err)
 	}
 
 	fromCosmos, err := utils.EthAddressToBech32(from.Hex(), p.bech32Prefix)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert from address: %w", err)
+		return nil, fmt.Errorf("failed to convert from address %s: %w", from.Hex(), err)
 	}
 
-	if callerCosmos != fromCosmos {
-		return nil, errors.New("caller is not owner")
-	}
-
-	// Check current owner
-	currentOwner, err := p.nftKeeper.GetOwner(ctx, tokenId)
-	if err != nil {
-		return nil, err
-	}
-
-	if currentOwner != fromCosmos {
-		return nil, errors.New("from address is not owner")
-	}
-
-	// Convert recipient to Cosmos
 	toCosmos, err := utils.EthAddressToBech32(to.Hex(), p.bech32Prefix)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert to address: %w", err)
+		return nil, fmt.Errorf("failed to convert to address %s: %w", to.Hex(), err)
 	}
 
-	// Transfer NFT
-	if err := p.nftKeeper.TransferNFT(ctx, tokenId, toCosmos); err != nil {
-		return nil, err
+	// Get current owner from blockchain state
+	currentOwner, err := p.nftKeeper.GetOwner(ctx, tokenId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get owner of token %d: %w", tokenId, err)
 	}
+
+	// Validate caller is the current owner
+	// In unified address model, caller's Cosmos address must match stored owner
+	if callerCosmos != currentOwner {
+		return nil, fmt.Errorf("unauthorized: caller %s (cosmos: %s) is not owner %s",
+			caller.Hex(), callerCosmos, currentOwner)
+	}
+
+	// Validate 'from' parameter matches current owner (ERC-721 standard)
+	if fromCosmos != currentOwner {
+		return nil, fmt.Errorf("invalid from address: %s (cosmos: %s) is not owner %s",
+			from.Hex(), fromCosmos, currentOwner)
+	}
+
+	// Log cross-pair transfer
+	ctx.Logger().Info("NFT transfer via precompile",
+		"token_id", tokenId,
+		"from_evm", from.Hex(),
+		"from_cosmos", fromCosmos,
+		"to_evm", to.Hex(),
+		"to_cosmos", toCosmos,
+		"caller_evm", caller.Hex(),
+		"caller_cosmos", callerCosmos,
+	)
+
+	// Transfer NFT in unified state
+	if err := p.nftKeeper.TransferNFT(ctx, tokenId, toCosmos); err != nil {
+		return nil, fmt.Errorf("failed to transfer NFT: %w", err)
+	}
+
+	// Emit dual address event (custom event with both formats)
+	p.emitNFTTransferredEvent(ctx, from, fromCosmos, to, toCosmos, tokenId)
+
+	// Emit standard ERC-721 Transfer event for MetaMask/wallet detection
+	// Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+	p.emitStandardTransferEvent(evm, from, to, tokenId)
 
 	return []byte{}, nil
 }
@@ -355,4 +403,57 @@ func encodeOwnerResult(owner common.Address, ownerCosmos string, exists bool) []
 	}.Pack(owner, ownerCosmos, exists)
 
 	return result
+}
+
+// emitNFTMintedEvent emits an event with dual address format when NFT is minted
+func (p *MirrorNFTPrecompile) emitNFTMintedEvent(ctx sdk.Context, to common.Address, toCosmos string, tokenId uint64, uri string) {
+	// Emit to Cosmos event manager for indexing
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			"nft.NFTMinted",
+			sdk.NewAttribute("eth_address", to.Hex()),
+			sdk.NewAttribute("cosmos_address", toCosmos),
+			sdk.NewAttribute("token_id", fmt.Sprintf("%d", tokenId)),
+			sdk.NewAttribute("uri", uri),
+		),
+	)
+}
+
+// emitNFTTransferredEvent emits an event with dual address format when NFT is transferred
+func (p *MirrorNFTPrecompile) emitNFTTransferredEvent(ctx sdk.Context, from common.Address, fromCosmos string, to common.Address, toCosmos string, tokenId uint64) {
+	// Emit to Cosmos event manager for indexing
+	ctx.EventManager().EmitEvent(
+		sdk.NewEvent(
+			"nft.NFTTransferred",
+			sdk.NewAttribute("from_eth_address", from.Hex()),
+			sdk.NewAttribute("from_cosmos_address", fromCosmos),
+			sdk.NewAttribute("to_eth_address", to.Hex()),
+			sdk.NewAttribute("to_cosmos_address", toCosmos),
+			sdk.NewAttribute("token_id", fmt.Sprintf("%d", tokenId)),
+		),
+	)
+}
+
+// emitStandardTransferEvent emits a standard ERC-721 Transfer event via EVM logs
+// This enables MetaMask NFT autodetection
+func (p *MirrorNFTPrecompile) emitStandardTransferEvent(evm *vm.EVM, from common.Address, to common.Address, tokenId uint64) {
+	// Create topics for indexed parameters
+	// Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+	topics := []common.Hash{
+		transferEvent,                                     // Event signature
+		common.BytesToHash(from.Bytes()),                  // from address (indexed)
+		common.BytesToHash(to.Bytes()),                    // to address (indexed)
+		common.BigToHash(new(big.Int).SetUint64(tokenId)), // tokenId (indexed)
+	}
+
+	// EVM logs have no data for fully indexed events
+	data := []byte{}
+
+	// Add log to EVM StateDB
+	// The log will be included in transaction receipt and indexed by MetaMask
+	evm.StateDB.AddLog(&types.Log{
+		Address: p.Address(),
+		Topics:  topics,
+		Data:    data,
+	})
 }

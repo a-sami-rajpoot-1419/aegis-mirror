@@ -388,10 +388,11 @@ func New(
 
 	// Phase 4: Custom modules
 
-	// Vault Keeper
+	// Vault Keeper (with BankKeeper for payment validation)
 	app.VaultKeeper = vaultkeeper.NewKeeper(
 		app.appCodec,
 		app.keys[vaulttypes.StoreKey],
+		app.BankKeeper, // Required for payment validation: "need of tokens to unlock the message and nft module (1 mirror)"
 	)
 
 	// NFT Keeper

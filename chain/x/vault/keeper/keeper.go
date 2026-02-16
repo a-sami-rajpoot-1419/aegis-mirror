@@ -13,20 +13,26 @@ import (
 	"mirrorvault/x/vault/types"
 )
 
+// Minimum payment required to purchase a credit (1 MIRROR = 1,000,000 amirror)
+const CreditCostAmirror = 1_000_000
+
 // Keeper maintains the state for the vault module
 type Keeper struct {
-	cdc      codec.BinaryCodec
-	storeKey storetypes.StoreKey
+	cdc        codec.BinaryCodec
+	storeKey   storetypes.StoreKey
+	bankKeeper types.BankKeeper
 }
 
 // NewKeeper creates a new Keeper
 func NewKeeper(
 	cdc codec.BinaryCodec,
 	storeKey storetypes.StoreKey,
+	bankKeeper types.BankKeeper,
 ) Keeper {
 	return Keeper{
-		cdc:      cdc,
-		storeKey: storeKey,
+		cdc:        cdc,
+		storeKey:   storeKey,
+		bankKeeper: bankKeeper,
 	}
 }
 
@@ -35,9 +41,53 @@ func (k Keeper) Logger(ctx sdk.Context) log.Logger {
 	return ctx.Logger().With("module", fmt.Sprintf("x/%s", types.ModuleName))
 }
 
-// AddCredit adds storage credits to an account
+// AddCreditWithPayment adds storage credits to an account AFTER validating payment
+// This enforces the requirement: "need of tokens to unlock the message and nft module (1 mirror)"
+// Payment is transferred from the user to the vault module account
+func (k Keeper) AddCreditWithPayment(ctx sdk.Context, address string, paidAmount sdk.Coins) error {
+	// Validate payment amount (must be at least 1 MIRROR = 1,000,000 amirror)
+	requiredPayment := sdk.NewCoins(sdk.NewInt64Coin("amirror", CreditCostAmirror))
+
+	if !paidAmount.IsAllGTE(requiredPayment) {
+		return fmt.Errorf("insufficient payment: got %s, required %s", paidAmount.String(), requiredPayment.String())
+	}
+
+	// Convert address string to SDK account address for bank operations
+	addr, err := sdk.AccAddressFromBech32(address)
+	if err != nil {
+		return fmt.Errorf("invalid address %s: %w", address, err)
+	}
+
+	// Transfer payment from user to vault module
+	if err := k.bankKeeper.SendCoinsFromAccountToModule(sdk.UnwrapSDKContext(ctx), addr, types.ModuleName, paidAmount); err != nil {
+		return fmt.Errorf("failed to process payment: %w", err)
+	}
+
+	// Payment successful - now add the credit
+	store := ctx.KVStore(k.storeKey)
+	key := append(types.UserCreditsKey, []byte(address)...)
+
+	currentCredits := k.GetCredits(ctx, address)
+	newCredits := currentCredits + 1
+
+	creditBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(creditBytes, newCredits)
+	store.Set(key, creditBytes)
+
+	k.Logger(ctx).Info("credit purchased with payment",
+		"address", address,
+		"payment", paidAmount.String(),
+		"new_credits", newCredits,
+	)
+
+	return nil
+}
+
+// AddCredit adds storage credits without payment (for testing/admin purposes)
+// WARNING: This bypasses payment requirement - use AddCreditWithPayment for production
 func (k Keeper) AddCredit(ctx sdk.Context, address string) error {
 	store := ctx.KVStore(k.storeKey)
+
 	key := append(types.UserCreditsKey, []byte(address)...)
 
 	currentCredits := k.GetCredits(ctx, address)

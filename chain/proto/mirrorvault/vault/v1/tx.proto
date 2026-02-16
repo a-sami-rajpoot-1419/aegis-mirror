@@ -1,0 +1,52 @@
+syntax = "proto3";
+package mirrorvault.vault.v1;
+
+import "cosmos/msg/v1/msg.proto";
+import "gogoproto/gogo.proto";
+import "amino/amino.proto";
+
+option go_package = "mirrorvault/x/vault/types";
+
+// Msg defines the Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+  
+  // AddCredit adds a storage credit to an account
+  rpc AddCredit(MsgAddCredit) returns (MsgAddCreditResponse);
+  
+  // StoreMessage stores a message for an account
+  rpc StoreMessage(MsgStoreMessage) returns (MsgStoreMessageResponse);
+}
+
+// MsgAddCredit is the Msg/AddCredit request type.
+message MsgAddCredit {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name)           = "vault/AddCredit";
+  
+  option (gogoproto.equal)           = false;
+  option (gogoproto.goproto_getters) = false;
+  
+  string creator = 1;
+}
+
+// MsgAddCreditResponse is the Msg/AddCredit response type.
+message MsgAddCreditResponse {
+  uint64 credits = 1;
+}
+
+// MsgStoreMessage is the Msg/StoreMessage request type.
+message MsgStoreMessage {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name)           = "vault/StoreMessage";
+  
+  option (gogoproto.equal)           = false;
+  option (gogoproto.goproto_getters) = false;
+  
+  string creator = 1;
+  string content = 2;
+}
+
+// MsgStoreMessageResponse is the Msg/StoreMessage response type.
+message MsgStoreMessageResponse {
+  uint64 index = 1;
+}

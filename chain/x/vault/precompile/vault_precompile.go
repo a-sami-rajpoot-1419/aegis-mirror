@@ -4,7 +4,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 
+	sdkmath "cosmossdk.io/math"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -98,7 +100,9 @@ func (p *VaultGatePrecompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly b
 		if readOnly {
 			return nil, errors.New("cannot call payToUnlock in read-only mode")
 		}
-		return p.payToUnlock(sdkCtx, contract.Caller())
+		// Convert uint256.Int to big.Int
+		valueBig := contract.Value().ToBig()
+		return p.payToUnlock(sdkCtx, contract.Caller(), valueBig)
 	case bytesEqual(selector, storeMessageSelector):
 		if readOnly {
 			return nil, errors.New("cannot call storeMessage in read-only mode")
@@ -117,21 +121,48 @@ func (p *VaultGatePrecompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly b
 	}
 }
 
-// payToUnlock adds a storage credit to the caller
-func (p *VaultGatePrecompile) payToUnlock(ctx sdk.Context, caller common.Address) ([]byte, error) {
+// payToUnlock adds a storage credit to the caller AFTER validating payment
+// Implements requirement: "need of tokens to unlock the message and nft module (1 mirror)"
+// Payment must be at least 1 MIRROR (1,000,000 amirror)
+func (p *VaultGatePrecompile) payToUnlock(ctx sdk.Context, caller common.Address, value *big.Int) ([]byte, error) {
 	// Convert caller address to Cosmos bech32
 	cosmosAddr, err := utils.EthAddressToBech32(caller.Hex(), p.bech32Prefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert address: %w", err)
 	}
 
-	// Add credit
-	if err := p.vaultKeeper.AddCredit(ctx, cosmosAddr); err != nil {
-		return nil, err
+	// Validate payment amount (value is in wei, which maps to amirror)
+	// 1 MIRROR = 1e18 wei in EVM = 1,000,000 amirror in Cosmos
+	// For simplicity: 1 MIRROR = 1,000,000 amirror
+	if value == nil || value.Cmp(big.NewInt(1_000_000)) < 0 {
+		return nil, fmt.Errorf("insufficient payment: sent %s, required 1000000 amirror (1 MIRROR)",
+			valueToString(value))
 	}
+
+	// Convert value to SDK coins
+	payment := sdk.NewCoins(sdk.NewCoin("amirror", sdkmath.NewIntFromBigInt(value)))
+
+	// Add credit with payment validation
+	if err := p.vaultKeeper.AddCreditWithPayment(ctx, cosmosAddr, payment); err != nil {
+		return nil, fmt.Errorf("failed to add credit: %w", err)
+	}
+
+	ctx.Logger().Info("credit purchased via payToUnlock",
+		"caller_evm", caller.Hex(),
+		"caller_cosmos", cosmosAddr,
+		"payment", payment.String(),
+	)
 
 	// Return success (empty bytes for void function)
 	return []byte{}, nil
+}
+
+// Helper function to safely convert big.Int to string
+func valueToString(value *big.Int) string {
+	if value == nil {
+		return "0"
+	}
+	return value.String()
 }
 
 // storeMessage stores a message using one credit

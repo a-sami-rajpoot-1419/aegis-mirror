@@ -1,0 +1,55 @@
+syntax = "proto3";
+package mirrorvault.nft.v1;
+
+import "cosmos/msg/v1/msg.proto";
+import "gogoproto/gogo.proto";
+import "amino/amino.proto";
+
+option go_package = "mirrorvault/x/nft/types";
+
+// Msg defines the Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+  
+  // MintNFT mints a new NFT
+  rpc MintNFT(MsgMintNFT) returns (MsgMintNFTResponse);
+  
+  // TransferNFT transfers an NFT to a new owner
+  rpc TransferNFT(MsgTransferNFT) returns (MsgTransferNFTResponse);
+}
+
+// MsgMintNFT is the Msg/MintNFT request type.
+message MsgMintNFT {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name)           = "nft/MintNFT";
+  
+  option (gogoproto.equal)           = false;
+  option (gogoproto.goproto_getters) = false;
+  
+  string creator   = 1;
+  uint64 token_id  = 2;
+  string token_uri = 3;
+}
+
+// MsgMintNFTResponse is the Msg/MintNFT response type.
+message MsgMintNFTResponse {
+  uint64 token_id = 1;
+}
+
+// MsgTransferNFT is the Msg/TransferNFT request type.
+message MsgTransferNFT {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name)           = "nft/TransferNFT";
+  
+  option (gogoproto.equal)           = false;
+  option (gogoproto.goproto_getters) = false;
+  
+  string creator   = 1;
+  uint64 token_id  = 2;
+  string recipient = 3;
+}
+
+// MsgTransferNFTResponse is the Msg/TransferNFT response type.
+message MsgTransferNFTResponse {
+  bool success = 1;
+}
