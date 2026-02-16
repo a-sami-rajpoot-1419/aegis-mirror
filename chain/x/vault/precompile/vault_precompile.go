@@ -131,16 +131,16 @@ func (p *VaultGatePrecompile) payToUnlock(ctx sdk.Context, caller common.Address
 		return nil, fmt.Errorf("failed to convert address: %w", err)
 	}
 
-	// Validate payment amount (value is in wei, which maps to amirror)
-	// 1 MIRROR = 1e18 wei in EVM = 1,000,000 amirror in Cosmos
-	// For simplicity: 1 MIRROR = 1,000,000 amirror
+	// Validate payment amount (value is in wei, which maps to umvlt)
+	// 1 MVLT = 1e18 wei in EVM = 1,000,000 umvlt in Cosmos
+	// For simplicity: 1 MVLT = 1,000,000 umvlt
 	if value == nil || value.Cmp(big.NewInt(1_000_000)) < 0 {
-		return nil, fmt.Errorf("insufficient payment: sent %s, required 1000000 amirror (1 MIRROR)",
+		return nil, fmt.Errorf("insufficient payment: sent %s, required 1000000 umvlt (1 MVLT)",
 			valueToString(value))
 	}
 
 	// Convert value to SDK coins
-	payment := sdk.NewCoins(sdk.NewCoin("amirror", sdkmath.NewIntFromBigInt(value)))
+	payment := sdk.NewCoins(sdk.NewCoin("umvlt", sdkmath.NewIntFromBigInt(value)))
 
 	// Add credit with payment validation
 	if err := p.vaultKeeper.AddCreditWithPayment(ctx, cosmosAddr, payment); err != nil {

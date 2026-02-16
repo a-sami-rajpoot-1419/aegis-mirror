@@ -13,8 +13,8 @@ import (
 	"mirrorvault/x/vault/types"
 )
 
-// Minimum payment required to purchase a credit (1 MIRROR = 1,000,000 amirror)
-const CreditCostAmirror = 1_000_000
+// Minimum payment required to purchase a credit (1 MVLT = 1,000,000 umvlt)
+const CreditCostUmvlt = 1_000_000
 
 // Keeper maintains the state for the vault module
 type Keeper struct {
@@ -45,8 +45,8 @@ func (k Keeper) Logger(ctx sdk.Context) log.Logger {
 // This enforces the requirement: "need of tokens to unlock the message and nft module (1 mirror)"
 // Payment is transferred from the user to the vault module account
 func (k Keeper) AddCreditWithPayment(ctx sdk.Context, address string, paidAmount sdk.Coins) error {
-	// Validate payment amount (must be at least 1 MIRROR = 1,000,000 amirror)
-	requiredPayment := sdk.NewCoins(sdk.NewInt64Coin("amirror", CreditCostAmirror))
+	// Validate payment amount (must be at least 1 MVLT = 1,000,000 umvlt)
+	requiredPayment := sdk.NewCoins(sdk.NewInt64Coin("umvlt", CreditCostUmvlt))
 
 	if !paidAmount.IsAllGTE(requiredPayment) {
 		return fmt.Errorf("insufficient payment: got %s, required %s", paidAmount.String(), requiredPayment.String())

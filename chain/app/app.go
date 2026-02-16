@@ -362,7 +362,7 @@ func New(
 		app.keys, // Pass all keys for precompile access
 		authtypes.NewModuleAddress(govtypes.ModuleName),
 		app.AccountKeeper,
-		app.PreciseBankKeeper,
+		app.BankKeeper, // Use BankKeeper directly instead of PreciseBankKeeper
 		app.StakingKeeper,
 		&app.FeeMarketKeeper,
 		&app.ConsensusParamsKeeper,

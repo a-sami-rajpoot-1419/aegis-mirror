@@ -11,13 +11,6 @@ accounts:
 - name: carol
   coins:
   - 1000000000umvlt
-client:
-  openapi:
-    path: docs/static/openapi.json
-faucet:
-  name: bob
-  coins:
-  - 10000000umvlt
 validators:
 - name: alice
   bonded: 200000000umvlt
