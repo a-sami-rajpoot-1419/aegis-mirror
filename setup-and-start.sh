@@ -8,18 +8,45 @@ echo "🚀 Mirror Vault - Complete Setup"
 echo "=================================="
 echo ""
 
+ROOT_DIR="/home/abdul-sami/work/The-Mirror-Vault"
+FUND_FILE="$ROOT_DIR/fund-accounts.txt"
+
+# Funding behavior:
+# - On fresh init / FORCE_RESET: any addresses in fund-accounts.txt (and EXTRA_GENESIS_ACCOUNTS)
+#   are added to genesis with the same large balance as the test accounts.
+# - On normal restart (persistent state): balances are preserved and we do not auto-top-up.
+#   If you want a top-up anyway, set TOP_UP_ON_START=1.
+TOP_UP_ON_START="${TOP_UP_ON_START:-}"
+
+STATE_HOME="$HOME/.mirrorvault"
+GENESIS_FILE="$STATE_HOME/config/genesis.json"
+APP_FILE="$STATE_HOME/config/app.toml"
+STATE_EXISTS=0
+if [ -f "$GENESIS_FILE" ] && [ -f "$APP_FILE" ]; then
+  STATE_EXISTS=1
+fi
+
 # 1. Clean environment
 echo "Step 1: Cleaning environment..."
-if [ -n "${KEEP_STATE:-}" ]; then
-  echo "⚠️  KEEP_STATE is set; not wiping ~/.mirrorvault (balances/contracts will persist)."
-  pkill -9 mirrorvaultd 2>/dev/null || true
-  pkill -9 ignite 2>/dev/null || true
-  sleep 1
-else
-  pkill -9 mirrorvaultd 2>/dev/null || true
-  pkill -9 ignite 2>/dev/null || true
-  rm -rf ~/.mirrorvault
+pkill -9 mirrorvaultd 2>/dev/null || true
+pkill -9 ignite 2>/dev/null || true
+
+# Persistence behavior:
+# - Default: if prior state exists, reuse it (balances/contracts persist)
+# - To force a clean reset: FORCE_RESET=1 bash ./setup-and-start.sh
+if [ -n "${FORCE_RESET:-}" ]; then
+  echo "⚠️  FORCE_RESET is set; wiping $STATE_HOME"
+  rm -rf "$STATE_HOME"
+  STATE_EXISTS=0
   sleep 2
+else
+  if [ "$STATE_EXISTS" -eq 1 ]; then
+    echo "✅ Reusing existing chain state at $STATE_HOME (persistent balances/contracts)"
+    sleep 1
+  else
+    echo "ℹ️  No existing state found; initializing a fresh localnet"
+    sleep 1
+  fi
 fi
 
 # 2. Build and install
@@ -32,7 +59,176 @@ BINARY="$CHAIN_DIR/mirrorvaultd"
 
 echo "✅ Binary built at $BINARY"
 
-# 3. Initialize chain
+if [ "$STATE_EXISTS" -eq 1 ]; then
+  echo "Step 3: Starting existing chain (no re-init)..."
+
+  # Start the chain in background so we can deploy wrapper contracts, then wait.
+  $BINARY start \
+    --api.enable \
+    --log_level info \
+    > /tmp/mirrorvaultd.log 2>&1 &
+
+  NODE_PID=$!
+  echo "✅ mirrorvaultd started (pid $NODE_PID), logs: /tmp/mirrorvaultd.log"
+
+  cleanup() {
+    echo "\n🛑 Stopping mirrorvaultd (pid $NODE_PID)..."
+    kill "$NODE_PID" 2>/dev/null || true
+  }
+  trap cleanup INT TERM HUP EXIT
+
+  echo "⏳ Waiting for JSON-RPC http://localhost:8545 ..."
+  for i in $(seq 1 40); do
+    if ! kill -0 "$NODE_PID" 2>/dev/null; then
+      echo "❌ mirrorvaultd exited while starting. Showing last log lines:"
+      tail -n 80 /tmp/mirrorvaultd.log | cat || true
+      if grep -q "state.AppHash does not match" /tmp/mirrorvaultd.log 2>/dev/null; then
+        echo ""
+        echo "✅ Detected AppHash mismatch (CometBFT/app DB out of sync)."
+        echo "   One-time fix: FORCE_RESET=1 bash ./setup-and-start.sh"
+        echo "   After that, normal restarts (pkill + ./setup-and-start.sh) will preserve balances."
+      fi
+      exit 1
+    fi
+    if curl -sS --max-time 1 -H 'content-type: application/json' \
+      --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+      http://localhost:8545 >/dev/null 2>&1; then
+      echo "✅ JSON-RPC is up"
+      break
+    fi
+    sleep 0.5
+  done
+
+  echo "⏳ Waiting for first block..."
+  for i in $(seq 1 60); do
+    if ! kill -0 "$NODE_PID" 2>/dev/null; then
+      echo "❌ mirrorvaultd exited while waiting for first block. Showing last log lines:"
+      tail -n 80 /tmp/mirrorvaultd.log | cat || true
+      if grep -q "state.AppHash does not match" /tmp/mirrorvaultd.log 2>/dev/null; then
+        echo ""
+        echo "✅ Detected AppHash mismatch (CometBFT/app DB out of sync)."
+        echo "   One-time fix: FORCE_RESET=1 bash ./setup-and-start.sh"
+        echo "   After that, normal restarts (pkill + ./setup-and-start.sh) will preserve balances."
+      fi
+      exit 1
+    fi
+    BN=$(curl -sS --max-time 1 -H 'content-type: application/json' \
+      --data '{"jsonrpc":"2.0","id":2,"method":"eth_blockNumber","params":[]}' \
+      http://localhost:8545 2>/dev/null | sed -n 's/.*"result":"\(0x[0-9a-fA-F]*\)".*/\1/p')
+    if [ -n "$BN" ] && [ "$BN" != "0x0" ]; then
+      echo "✅ Block production started (blockNumber=$BN)"
+      break
+    fi
+    sleep 0.5
+  done
+
+  # Deploy wrappers only if missing (no code at recorded addresses)
+  NEED_DEPLOY=1
+  if [ -f /home/abdul-sami/work/The-Mirror-Vault/contracts/deployed-addresses.json ]; then
+    VAULT=$(jq -r '.vaultGate // empty' /home/abdul-sami/work/The-Mirror-Vault/contracts/deployed-addresses.json 2>/dev/null)
+    NFT=$(jq -r '.mirrorNFT // empty' /home/abdul-sami/work/The-Mirror-Vault/contracts/deployed-addresses.json 2>/dev/null)
+    if [ -n "$VAULT" ] && [ -n "$NFT" ]; then
+      VC=$(curl -sS --max-time 2 -H 'content-type: application/json' \
+        --data "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"eth_getCode\",\"params\":[\"$VAULT\",\"latest\"]}" \
+        http://localhost:8545 2>/dev/null | sed -n 's/.*"result":"\(0x[0-9a-fA-F]*\)".*/\1/p')
+      NC=$(curl -sS --max-time 2 -H 'content-type: application/json' \
+        --data "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"eth_getCode\",\"params\":[\"$NFT\",\"latest\"]}" \
+        http://localhost:8545 2>/dev/null | sed -n 's/.*"result":"\(0x[0-9a-fA-F]*\)".*/\1/p')
+      if [ -n "$VC" ] && [ "$VC" != "0x" ] && [ -n "$NC" ] && [ "$NC" != "0x" ]; then
+        NEED_DEPLOY=0
+        echo "✅ Wrapper contracts already deployed (code present)"
+      fi
+    fi
+  fi
+
+  if [ "$NEED_DEPLOY" -eq 1 ]; then
+    echo "📦 Deploying wrapper contracts (VaultGate + MirrorNFT)..."
+    cd /home/abdul-sami/work/The-Mirror-Vault/contracts
+    if [ ! -d node_modules ]; then
+      npm install --silent
+    fi
+
+    set +e
+    DEPLOY_OK=0
+    for i in $(seq 1 10); do
+      npm run deploy:local
+      if [ $? -eq 0 ]; then
+        DEPLOY_OK=1
+        break
+      fi
+      echo "⚠️  Deploy failed (attempt $i/10). Retrying in 1s..."
+      sleep 1
+    done
+    set -e
+
+    if [ "$DEPLOY_OK" -eq 1 ]; then
+      echo "✅ Deployed addresses written to contracts/deployed-addresses.json"
+    else
+      echo "❌ Contract deploy failed after retries. Chain is still running."
+      echo "   You can retry manually: (cd contracts && npm run deploy:local)"
+    fi
+  fi
+
+  if [ -n "$TOP_UP_ON_START" ]; then
+    echo "💸 TOP_UP_ON_START is set; funding addresses from $FUND_FILE (and EXTRA_GENESIS_ACCOUNTS) via bank send..."
+    POST_FUND_AMT="${POST_FUND_AMT:-1000000000000000000000umvlt}"
+
+    declare -A _seen_fund_addrs
+    FUND_ADDRS=()
+
+    if [ -f "$FUND_FILE" ]; then
+      while IFS= read -r line; do
+        addr="$(echo "$line" | xargs)"
+        [ -z "$addr" ] && continue
+        echo "$addr" | grep -qE '^#' && continue
+        if [ -z "${_seen_fund_addrs[$addr]:-}" ]; then
+          _seen_fund_addrs[$addr]=1
+          FUND_ADDRS+=("$addr")
+        fi
+      done < "$FUND_FILE"
+    fi
+
+    if [ -n "${EXTRA_GENESIS_ACCOUNTS:-}" ]; then
+      IFS=',' read -r -a EXTRA_ADDRS <<< "$EXTRA_GENESIS_ACCOUNTS"
+      for addr0 in "${EXTRA_ADDRS[@]}"; do
+        addr="$(echo "$addr0" | xargs)"
+        [ -z "$addr" ] && continue
+        if [ -z "${_seen_fund_addrs[$addr]:-}" ]; then
+          _seen_fund_addrs[$addr]=1
+          FUND_ADDRS+=("$addr")
+        fi
+      done
+    fi
+
+    if [ "${#FUND_ADDRS[@]}" -eq 0 ]; then
+      echo "ℹ️  No fund addresses found. Add bech32 addresses to $FUND_FILE or set EXTRA_GENESIS_ACCOUNTS."
+    else
+      set +e
+      for addr in "${FUND_ADDRS[@]}"; do
+        echo "  - funding $addr with $POST_FUND_AMT"
+        $BINARY tx bank send alice "$addr" "$POST_FUND_AMT" \
+          --chain-id mirror-vault-localnet \
+          --keyring-backend test \
+          --node http://localhost:26657 \
+          --gas auto \
+          --gas-adjustment 1.3 \
+          --gas-prices 0umvlt \
+          -y -b block >/dev/null 2>&1
+        if [ $? -ne 0 ]; then
+          echo "    ⚠️  failed to fund $addr (check address format; must be mirror1...)"
+        fi
+      done
+      set -e
+      echo "✅ Top-up finished"
+    fi
+  fi
+
+  echo "🚀 Chain is running. Press Ctrl+C to stop."
+  wait "$NODE_PID"
+  exit 0
+fi
+
+# 3. Initialize chain (fresh localnet only)
 echo "Step 3: Initializing chain..."
 $BINARY init mirror-vault --chain-id mirror-vault-localnet --default-denom umvlt --overwrite
 echo "✅ Chain initialized"
@@ -70,16 +266,43 @@ $BINARY genesis add-genesis-account mirror17w0adeg64ky0daxwd2ugyuneellmjgnx7uk5x
 # Optionally fund additional accounts (e.g. addresses you connect from MetaMask/Keplr)
 # Usage:
 #   EXTRA_GENESIS_ACCOUNTS="mirror1...,mirror1..." bash ./setup-and-start.sh
-if [ -n "${EXTRA_GENESIS_ACCOUNTS:-}" ]; then
-  echo "➕ Funding EXTRA_GENESIS_ACCOUNTS..."
-  IFS=',' read -r -a EXTRA_ADDRS <<< "$EXTRA_GENESIS_ACCOUNTS"
-  for addr in "${EXTRA_ADDRS[@]}"; do
-    addr="$(echo "$addr" | xargs)"
+declare -A _seen_genesis_addrs
+GENESIS_FUND_ADDRS=()
+
+if [ -f "$FUND_FILE" ]; then
+  echo "➕ Funding addresses from $FUND_FILE (genesis)..."
+  while IFS= read -r line; do
+    addr="$(echo "$line" | xargs)"
     [ -z "$addr" ] && continue
+    echo "$addr" | grep -qE '^#' && continue
+    if [ -z "${_seen_genesis_addrs[$addr]:-}" ]; then
+      _seen_genesis_addrs[$addr]=1
+      GENESIS_FUND_ADDRS+=("$addr")
+    fi
+  done < "$FUND_FILE"
+fi
+
+if [ -n "${EXTRA_GENESIS_ACCOUNTS:-}" ]; then
+  echo "➕ Funding EXTRA_GENESIS_ACCOUNTS (genesis)..."
+  IFS=',' read -r -a EXTRA_ADDRS <<< "$EXTRA_GENESIS_ACCOUNTS"
+  for addr0 in "${EXTRA_ADDRS[@]}"; do
+    addr="$(echo "$addr0" | xargs)"
+    [ -z "$addr" ] && continue
+    if [ -z "${_seen_genesis_addrs[$addr]:-}" ]; then
+      _seen_genesis_addrs[$addr]=1
+      GENESIS_FUND_ADDRS+=("$addr")
+    fi
+  done
+fi
+
+if [ "${#GENESIS_FUND_ADDRS[@]}" -gt 0 ]; then
+  set +e
+  for addr in "${GENESIS_FUND_ADDRS[@]}"; do
     echo "  - $addr"
     $BINARY genesis add-genesis-account "$addr" "$FUND_AMT" --keyring-backend test >/dev/null 2>&1 || \
-      echo "  ⚠️  Could not fund $addr (skipping)"
+      echo "  ⚠️  Could not fund $addr (skipping; must be mirror1...)"
   done
+  set -e
 fi
 echo "✅ Genesis accounts added"
 
@@ -174,6 +397,17 @@ trap cleanup INT TERM HUP EXIT
 
 echo "⏳ Waiting for JSON-RPC http://localhost:8545 ..."
 for i in $(seq 1 40); do
+  if ! kill -0 "$NODE_PID" 2>/dev/null; then
+    echo "❌ mirrorvaultd exited while starting. Showing last log lines:"
+    tail -n 80 /tmp/mirrorvaultd.log | cat || true
+    if grep -q "state.AppHash does not match" /tmp/mirrorvaultd.log 2>/dev/null; then
+      echo ""
+      echo "✅ Detected AppHash mismatch (CometBFT/app DB out of sync)."
+      echo "   One-time fix: FORCE_RESET=1 bash ./setup-and-start.sh"
+      echo "   After that, normal restarts (pkill + ./setup-and-start.sh) will preserve balances."
+    fi
+    exit 1
+  fi
   if curl -sS --max-time 1 -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
     http://localhost:8545 >/dev/null 2>&1; then
@@ -185,6 +419,17 @@ done
 
 echo "⏳ Waiting for first block..."
 for i in $(seq 1 60); do
+  if ! kill -0 "$NODE_PID" 2>/dev/null; then
+    echo "❌ mirrorvaultd exited while waiting for first block. Showing last log lines:"
+    tail -n 80 /tmp/mirrorvaultd.log | cat || true
+    if grep -q "state.AppHash does not match" /tmp/mirrorvaultd.log 2>/dev/null; then
+      echo ""
+      echo "✅ Detected AppHash mismatch (CometBFT/app DB out of sync)."
+      echo "   One-time fix: FORCE_RESET=1 bash ./setup-and-start.sh"
+      echo "   After that, normal restarts (pkill + ./setup-and-start.sh) will preserve balances."
+    fi
+    exit 1
+  fi
   BN=$(curl -sS --max-time 1 -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":2,"method":"eth_blockNumber","params":[]}' \
     http://localhost:8545 2>/dev/null | sed -n 's/.*"result":"\(0x[0-9a-fA-F]*\)".*/\1/p')

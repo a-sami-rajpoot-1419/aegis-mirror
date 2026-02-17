@@ -8,6 +8,36 @@
 - Cosmos REST: http://localhost:1317
 - CometBFT RPC: http://localhost:26657
 
+## Start / Restart (Persistent)
+
+### One-time recovery (if you see AppHash mismatch / chain won’t start)
+- Run: `FORCE_RESET=1 bash ./setup-and-start.sh`
+
+This wipes `~/.mirrorvault` once to repair inconsistent local state.
+
+### Normal restarts (state persists)
+- Stop: `pkill -9 mirrorvaultd`
+- Start: `bash ./setup-and-start.sh`
+
+Balances and deployed wrapper contracts persist because `~/.mirrorvault` is reused.
+
+## Automatic Wallet Funding
+
+### Fund wallets on resets (recommended)
+- Put your bech32 wallet address(es) in `fund-accounts.txt` (one per line, `mirror1...`).
+- Then run a reset start: `FORCE_RESET=1 bash ./setup-and-start.sh`
+
+Those addresses are added to genesis with the same large balance as the test accounts.
+
+### Optional top-up on an existing chain
+Run:
+- `bash tools/fund-wallets.sh`
+
+This sends native MVLT via EVM (so MetaMask/Keplr EVM mode updates immediately) to every address in `fund-accounts.txt`.
+
+Override amount (MVLT):
+- `AMOUNT_MVLT=5000 bash tools/fund-wallets.sh`
+
 ## Deployed Contracts
 
 ### VaultGate

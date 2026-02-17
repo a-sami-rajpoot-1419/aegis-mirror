@@ -1,0 +1,9 @@
+# Add wallet addresses (bech32, mirror1...) you want pre-funded on chain resets.
+# These are applied during genesis creation when you run:
+#   FORCE_RESET=1 bash ./setup-and-start.sh
+#
+# You can also top-up these addresses on an existing persistent chain with:
+#   TOP_UP_ON_START=1 bash ./setup-and-start.sh
+#
+# Current wallet
+mirror1e7pskytncyhsmvs98hp0c2733dgc9r26nd4wep

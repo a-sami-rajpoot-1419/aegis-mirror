@@ -2,7 +2,6 @@ package ante
 
 import (
 	evmante "github.com/cosmos/evm/ante/evm"
-	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
@@ -13,8 +12,8 @@ import (
 // These advanced features will be added in Phase 2 when we integrate IBC
 func newCosmosAnteHandler(options HandlerOptions) sdk.AnteHandler {
 	return func(ctx sdk.Context, tx sdk.Tx, simulate bool) (newCtx sdk.Context, err error) {
-		// Get feemarket params for GasWantedDecorator
-		feeMarketParams := feemarkettypes.DefaultParams()
+		// IMPORTANT: Use keeper params (genesis/runtime), not defaults.
+		feeMarketParams := options.FeeMarketKeeper.GetParams(ctx)
 
 		handler := sdk.ChainAnteDecorators(
 			ante.NewSetUpContextDecorator(),

@@ -29,6 +29,21 @@ contracts/typechain-types/
 contracts/coverage/
 contracts/.env
 
+# Frontend build artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.vercel/
+
+# Chain build artifacts (DO NOT COMMIT BINARIES)
+chain/mirrorvaultd
+chain/mirrorvaultd.*
+chain/**/mirrorvaultd
+chain/**/mirrorvaultd.*
+chain/bin/
+chain/build/
+chain/release/
+
 # Chain data (user home directory - should not be in repo)
 .mirrorvault/
 

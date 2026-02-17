@@ -6,10 +6,12 @@
     "build": "hardhat compile",
     "test": "hardhat test",
     "node": "hardhat node",
-    "deploy:local": "hardhat run --network mirrorVaultLocal scripts/deploy.ts"
+    "deploy:local": "hardhat run --network mirrorVaultLocal scripts/deploy.ts",
+    "fund:local": "hardhat run --network mirrorVaultLocal scripts/fundWallets.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "bech32": "^2.0.0",
     "hardhat": "^2.22.18",
     "typescript": "^5.7.3"
   }
