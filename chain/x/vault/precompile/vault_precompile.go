@@ -129,6 +129,7 @@ func (p *VaultGatePrecompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly b
 func (p *VaultGatePrecompile) payToUnlock(ctx sdk.Context, evm *vm.EVM, contract *vm.Contract, value *big.Int) ([]byte, error) {
 	beneficiary := evm.Origin
 	precompileAddr := contract.Address()
+	payer := contract.Caller()
 
 	// Convert beneficiary (EOA / tx origin) to Cosmos bech32
 	beneficiaryBech32, err := utils.EthAddressToBech32(beneficiary.Hex(), p.bech32Prefix)
@@ -155,13 +156,31 @@ func (p *VaultGatePrecompile) payToUnlock(ctx sdk.Context, evm *vm.EVM, contract
 	moduleAcc := authtypes.NewModuleAddress(vaulttypes.ModuleName)
 	moduleEthAddr := common.BytesToAddress(moduleAcc)
 
+	// Some EVM implementations do not credit precompile accounts with msg.value
+	// even though the call specifies value. Support both behaviors:
+	// - If precompile balance has the value, move precompile -> module.
+	// - Otherwise, move payer (caller) -> module.
 	precompileBal := evm.StateDB.GetBalance(precompileAddr)
-	if precompileBal == nil || precompileBal.Cmp(amountU256) < 0 {
-		return nil, fmt.Errorf("insufficient precompile balance for payment")
+	if precompileBal != nil && precompileBal.Cmp(amountU256) >= 0 {
+		evm.StateDB.SubBalance(precompileAddr, amountU256, tracing.BalanceChangeTransfer)
+		evm.StateDB.AddBalance(moduleEthAddr, amountU256, tracing.BalanceChangeTransfer)
+		ctx.Logger().Debug("payToUnlock: moved funds from precompile -> module",
+			"precompile", precompileAddr.Hex(),
+			"module_evm", moduleEthAddr.Hex(),
+		)
+	} else {
+		payerBal := evm.StateDB.GetBalance(payer)
+		if payerBal == nil || payerBal.Cmp(amountU256) < 0 {
+			return nil, fmt.Errorf("insufficient payer balance for payment")
+		}
+		evm.StateDB.SubBalance(payer, amountU256, tracing.BalanceChangeTransfer)
+		evm.StateDB.AddBalance(moduleEthAddr, amountU256, tracing.BalanceChangeTransfer)
+		ctx.Logger().Debug("payToUnlock: moved funds from payer -> module (precompile not credited)",
+			"payer", payer.Hex(),
+			"precompile", precompileAddr.Hex(),
+			"module_evm", moduleEthAddr.Hex(),
+		)
 	}
-
-	evm.StateDB.SubBalance(precompileAddr, amountU256, tracing.BalanceChangeTransfer)
-	evm.StateDB.AddBalance(moduleEthAddr, amountU256, tracing.BalanceChangeTransfer)
 
 	// Payment successful - now add the credit to the beneficiary (tx origin)
 	if err := p.vaultKeeper.AddCredit(ctx, beneficiaryBech32); err != nil {
@@ -171,7 +190,7 @@ func (p *VaultGatePrecompile) payToUnlock(ctx sdk.Context, evm *vm.EVM, contract
 	ctx.Logger().Info("credit purchased via payToUnlock",
 		"beneficiary_evm", beneficiary.Hex(),
 		"beneficiary_cosmos", beneficiaryBech32,
-		"payer_evm", precompileAddr.Hex(),
+		"payer_evm", payer.Hex(),
 		"payment_wei", valueToString(value),
 		"module_evm", moduleEthAddr.Hex(),
 	)
