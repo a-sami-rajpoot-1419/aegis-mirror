@@ -47,8 +47,8 @@ function formatTime(date: Date): string {
 }
 
 async function getFeeOverrides(provider: any): Promise<Record<string, any>> {
-  const DEFAULT_PRIORITY = 1_000_000_000n; // 1 gwei
-  const DEFAULT_MAX = 2_000_000_000n; // 2 gwei
+  const DEFAULT_PRIORITY = BigInt(1_000_000_000); // 1 gwei
+  const DEFAULT_MAX = BigInt(2_000_000_000); // 2 gwei
 
   try {
     const feeData = await provider.getFeeData?.();
@@ -58,14 +58,14 @@ async function getFeeOverrides(provider: any): Promise<Record<string, any>> {
     const maxPriorityFeePerGas: bigint | null | undefined = feeData?.maxPriorityFeePerGas;
     const gasPrice: bigint | null | undefined = feeData?.gasPrice;
 
-    if (typeof maxFeePerGas === "bigint" && maxFeePerGas > 0n) overrides.maxFeePerGas = maxFeePerGas;
-    if (typeof maxPriorityFeePerGas === "bigint" && maxPriorityFeePerGas > 0n) {
+    if (typeof maxFeePerGas === "bigint" && maxFeePerGas > BigInt(0)) overrides.maxFeePerGas = maxFeePerGas;
+    if (typeof maxPriorityFeePerGas === "bigint" && maxPriorityFeePerGas > BigInt(0)) {
       overrides.maxPriorityFeePerGas = maxPriorityFeePerGas;
     }
 
     // Some providers return only legacy gasPrice.
     if (!overrides.maxFeePerGas && !overrides.maxPriorityFeePerGas) {
-      if (typeof gasPrice === "bigint" && gasPrice > 0n) overrides.gasPrice = gasPrice;
+      if (typeof gasPrice === "bigint" && gasPrice > BigInt(0)) overrides.gasPrice = gasPrice;
     }
 
     // If we still have nothing (common on custom EVMs), force a safe EIP-1559 default.
@@ -75,7 +75,7 @@ async function getFeeOverrides(provider: any): Promise<Record<string, any>> {
     } else if (overrides.maxFeePerGas && !overrides.maxPriorityFeePerGas) {
       overrides.maxPriorityFeePerGas = DEFAULT_PRIORITY;
     } else if (overrides.maxPriorityFeePerGas && !overrides.maxFeePerGas) {
-      overrides.maxFeePerGas = overrides.maxPriorityFeePerGas * 2n;
+      overrides.maxFeePerGas = overrides.maxPriorityFeePerGas * BigInt(2);
     }
 
     return overrides;
@@ -94,6 +94,9 @@ export default function Home() {
   const [mirrorAddress, setMirrorAddress] = useState<string | null>(null);
   const [balanceEth, setBalanceEth] = useState<string>("0");
   const [balanceWei, setBalanceWei] = useState<string>("0");
+
+  const [sendTo, setSendTo] = useState<string>("");
+  const [sendAmount, setSendAmount] = useState<string>("");
 
   const [messageInput, setMessageInput] = useState<string>("");
   const [status, setStatus] = useState<{ type: LogType; text: string } | null>(null);
@@ -190,6 +193,40 @@ export default function Home() {
     const bal = await provider.getBalance(evmAddress);
     setBalanceWei(bal.toString());
     setBalanceEth(formatEther(bal));
+  }
+
+  async function sendMvlt() {
+    try {
+      if (!evmAddress) throw new Error("Connect a wallet first");
+      if (!browserProvider) throw new Error("No wallet provider");
+
+      const toRaw = sendTo.trim();
+      if (!toRaw) throw new Error("Recipient is required");
+
+      const amountRaw = sendAmount.trim();
+      if (!amountRaw) throw new Error("Amount is required");
+
+      const toEvm = isMirrorAddress(toRaw) ? mirrorToEvmAddress(toRaw) : toRaw;
+      const value = parseEther(amountRaw);
+      if (value <= BigInt(0)) throw new Error("Amount must be > 0");
+
+      const signer = await getSigner();
+      const fee = await getFeeOverrides(browserProvider);
+
+      addLog(`Sending ${amountRaw} MVLT to ${toEvm}…`, "info");
+      const tx = await signer.sendTransaction({ to: toEvm, value, gasLimit: BigInt(21000), ...fee });
+      addLog(`Tx sent: ${tx.hash}`, "info");
+      const receipt = await tx.wait();
+      addLog(`Transfer confirmed (block ${receipt.blockNumber})`, "success");
+      showStatus("Transfer confirmed", "success");
+      setSendTo("");
+      setSendAmount("");
+      await refreshBalance();
+    } catch (err) {
+      const message = formatUnknownError(err);
+      addLog(`transfer MVLT failed: ${message}`, "error");
+      showStatus(message, "error");
+    }
   }
 
   async function connect(wallet: ActiveWallet) {
@@ -634,6 +671,37 @@ export default function Home() {
                 {Number(balanceEth).toFixed(6)}
                 <div className="mt-1 text-xs text-zinc-400 break-all">wei: {balanceWei}</div>
               </div>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-md border border-zinc-800 bg-zinc-950/30 p-3">
+            <div className="text-sm font-medium">Send MVLT (in-dapp)</div>
+            <div className="mt-2 grid gap-2 md:grid-cols-3">
+              <input
+                value={sendTo}
+                onChange={(e) => setSendTo(e.target.value)}
+                placeholder="Recipient (0x… or mirror1…)"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm outline-none focus:border-sky-500 md:col-span-2"
+              />
+              <input
+                value={sendAmount}
+                onChange={(e) => setSendAmount(e.target.value)}
+                placeholder="Amount (e.g. 1.5)"
+                inputMode="decimal"
+                className="w-full rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-sm outline-none focus:border-sky-500"
+              />
+            </div>
+            <div className="mt-2 flex items-center justify-end">
+              <button
+                onClick={sendMvlt}
+                disabled={!connected || sendTo.trim().length === 0 || sendAmount.trim().length === 0}
+                className="rounded-md bg-violet-500 px-3 py-2 text-sm font-medium text-zinc-950 hover:bg-violet-400 disabled:opacity-40"
+              >
+                Send MVLT
+              </button>
+            </div>
+            <div className="mt-2 text-xs text-zinc-400">
+              Uses EVM transfer under the hood; bech32 recipients are auto-converted.
             </div>
           </div>
         </section>
